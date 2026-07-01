@@ -327,9 +327,43 @@ mod tests {
 
         assert_eq!(state.connection_status(), ConnectionStatus::Connected);
         assert_eq!(state.connected_version(), Some("1.37.0"));
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
         assert_eq!(
             state.settings_feedback(),
             Some("Connection test succeeded.")
+        );
+    }
+
+    #[test]
+    fn initial_refresh_failure_keeps_successful_connection_state() {
+        let mut state = State::initial();
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestRequested),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 1,
+                settings: Settings::default(),
+                result: Ok(ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new()))),
+            }),
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation: 1,
+                result: Err(ClientError::Transport("connection refused".to_owned())),
+            }),
+        );
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Connected);
+        assert_eq!(state.connected_version(), Some("1.37.0"));
+        assert_eq!(state.refresh_state(), RefreshState::NeverRefreshed);
+        assert_eq!(
+            state.refresh_feedback(),
+            Some("Connection failed. Check the endpoint and secret.")
         );
     }
 
