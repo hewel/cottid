@@ -4,12 +4,13 @@ use crate::aria2::domain::{DownloadItem, DownloadSnapshot, Gid, GlobalStats, Ver
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::{
     JsonRpcRequest, RequestId, build_add_uri_request, build_get_global_stat_request,
-    build_get_version_request, build_tell_active_request, build_tell_stopped_request,
-    build_tell_waiting_request,
+    build_get_version_request, build_pause_request, build_purge_stopped_request,
+    build_remove_request, build_tell_active_request, build_tell_stopped_request,
+    build_tell_waiting_request, build_unpause_request,
 };
 use crate::aria2::raw_types::{
     parse_add_uri_response, parse_download_items_response, parse_get_version_response,
-    parse_global_stats_response,
+    parse_gid_command_response, parse_global_stats_response, parse_ok_response,
 };
 use crate::config::{RpcAuth, Settings};
 
@@ -19,6 +20,10 @@ const TELL_ACTIVE_REQUEST_ID: RequestId = RequestId::new(3);
 const TELL_WAITING_REQUEST_ID: RequestId = RequestId::new(4);
 const TELL_STOPPED_REQUEST_ID: RequestId = RequestId::new(5);
 const ADD_URI_REQUEST_ID: RequestId = RequestId::new(6);
+const PAUSE_REQUEST_ID: RequestId = RequestId::new(7);
+const UNPAUSE_REQUEST_ID: RequestId = RequestId::new(8);
+const REMOVE_REQUEST_ID: RequestId = RequestId::new(9);
+const PURGE_STOPPED_REQUEST_ID: RequestId = RequestId::new(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -95,6 +100,26 @@ pub fn add_uri(settings: Settings, uri: String) -> Result<Gid, ClientError> {
     add_uri_with_transport(&settings, &transport, &uri)
 }
 
+pub fn pause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
+    let transport = ReqwestTransport::new();
+    pause_with_transport(&settings, &transport, &gid)
+}
+
+pub fn unpause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
+    let transport = ReqwestTransport::new();
+    unpause_with_transport(&settings, &transport, &gid)
+}
+
+pub fn remove(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
+    let transport = ReqwestTransport::new();
+    remove_with_transport(&settings, &transport, &gid)
+}
+
+pub fn purge_stopped(settings: Settings) -> Result<(), ClientError> {
+    let transport = ReqwestTransport::new();
+    purge_stopped_with_transport(&settings, &transport)
+}
+
 pub fn test_connection_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -158,6 +183,49 @@ pub fn add_uri_with_transport(
     let body = send_rpc_request(settings, transport, request)?;
 
     parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
+}
+
+pub fn pause_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+    gid: &Gid,
+) -> Result<Gid, ClientError> {
+    let request = build_pause_request(PAUSE_REQUEST_ID, secret(settings), gid);
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_gid_command_response(&body, PAUSE_REQUEST_ID)
+}
+
+pub fn unpause_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+    gid: &Gid,
+) -> Result<Gid, ClientError> {
+    let request = build_unpause_request(UNPAUSE_REQUEST_ID, secret(settings), gid);
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_gid_command_response(&body, UNPAUSE_REQUEST_ID)
+}
+
+pub fn remove_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+    gid: &Gid,
+) -> Result<Gid, ClientError> {
+    let request = build_remove_request(REMOVE_REQUEST_ID, secret(settings), gid);
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_gid_command_response(&body, REMOVE_REQUEST_ID)
+}
+
+pub fn purge_stopped_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+) -> Result<(), ClientError> {
+    let request = build_purge_stopped_request(PURGE_STOPPED_REQUEST_ID, secret(settings));
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
 }
 
 fn fetch_download_items(
@@ -237,8 +305,10 @@ mod tests {
     use super::{
         HttpPost, HttpResponse, Transport, add_uri_with_transport,
         fetch_download_snapshot_with_transport, fetch_global_stats_with_transport,
-        test_connection_with_transport,
+        pause_with_transport, purge_stopped_with_transport, remove_with_transport,
+        test_connection_with_transport, unpause_with_transport,
     };
+    use crate::aria2::domain::Gid;
     use crate::aria2::errors::ClientError;
     use crate::config::{RpcAuth, Secret, Settings, SettingsDraft};
 
@@ -454,6 +524,52 @@ mod tests {
             add_uri_with_transport(&settings, &transport, "https://example.test/file"),
             Err(ClientError::MalformedResponse(_))
         ));
+    }
+
+    #[test]
+    fn pause_unpause_and_remove_post_gid_commands() {
+        let settings = Settings::default();
+        let gid = Gid::new("abc123").expect("valid gid");
+
+        let pause_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":7,"result":"abc123"}"#,
+        )));
+        pause_with_transport(&settings, &pause_transport, &gid).expect("pause succeeds");
+
+        let unpause_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":8,"result":"abc123"}"#,
+        )));
+        unpause_with_transport(&settings, &unpause_transport, &gid).expect("unpause succeeds");
+
+        let remove_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":9,"result":"abc123"}"#,
+        )));
+        remove_with_transport(&settings, &remove_transport, &gid).expect("remove succeeds");
+
+        let pause_body: Value =
+            serde_json::from_str(pause_transport.posts.borrow()[0].body()).expect("json");
+        let unpause_body: Value =
+            serde_json::from_str(unpause_transport.posts.borrow()[0].body()).expect("json");
+        let remove_body: Value =
+            serde_json::from_str(remove_transport.posts.borrow()[0].body()).expect("json");
+
+        assert_eq!(pause_body["method"], "aria2.pause");
+        assert_eq!(unpause_body["method"], "aria2.unpause");
+        assert_eq!(remove_body["method"], "aria2.remove");
+        assert_eq!(pause_body["params"][0], "abc123");
+    }
+
+    #[test]
+    fn purge_stopped_posts_command_and_requires_ok() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":10,"result":"OK"}"#,
+        )));
+
+        purge_stopped_with_transport(&settings, &transport).expect("purge succeeds");
+
+        let body: Value = serde_json::from_str(transport.posts.borrow()[0].body()).expect("json");
+        assert_eq!(body["method"], "aria2.purgeDownloadResult");
     }
 
     #[test]

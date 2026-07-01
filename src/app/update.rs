@@ -1,17 +1,83 @@
 use iced::Task;
 
+use super::state::RunningAction;
 use super::{
-    AddMessage, ConnectionMessage, DownloadsMessage, Message, SettingsMessage, State,
-    ToolbarMessage,
+    ActionMessage, AddMessage, ConnectionMessage, DownloadsMessage, Message, SettingsMessage,
+    State, ToolbarMessage,
 };
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::Add(message) => update_add(state, message),
+        Message::Action(message) => update_action(state, message),
         Message::Connection(message) => update_connection(state, message),
         Message::Downloads(message) => update_downloads(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+    }
+}
+
+fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
+    match message {
+        ActionMessage::Pause(_)
+        | ActionMessage::Unpause(_)
+        | ActionMessage::Remove(_)
+        | ActionMessage::PurgeStopped => {
+            let Some((generation, settings, action)) = state.begin_action(message) else {
+                return Task::none();
+            };
+            let target = action.target();
+
+            Task::perform(
+                async move {
+                    match action {
+                        RunningAction::Pause(gid) => {
+                            crate::aria2::client::pause(settings, gid).map(|_| ())
+                        }
+                        RunningAction::Unpause(gid) => {
+                            crate::aria2::client::unpause(settings, gid).map(|_| ())
+                        }
+                        RunningAction::Remove(gid) => {
+                            crate::aria2::client::remove(settings, gid).map(|_| ())
+                        }
+                        RunningAction::PurgeStopped => {
+                            crate::aria2::client::purge_stopped(settings)
+                        }
+                    }
+                },
+                move |result| {
+                    Message::Action(ActionMessage::Finished {
+                        generation,
+                        target,
+                        result,
+                    })
+                },
+            )
+        }
+        ActionMessage::Finished {
+            generation,
+            target,
+            result,
+        } => {
+            if state.finish_action(generation, target, result) {
+                let Some((refresh_generation, refresh_settings)) = state.begin_downloads_refresh()
+                else {
+                    return Task::none();
+                };
+
+                return Task::perform(
+                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings) },
+                    move |result| {
+                        Message::Downloads(DownloadsMessage::RefreshFinished {
+                            generation: refresh_generation,
+                            result,
+                        })
+                    },
+                );
+            }
+
+            Task::none()
+        }
     }
 }
 

@@ -1,10 +1,14 @@
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
-use crate::app::{DownloadFilter, DownloadRowView, DownloadsMessage, Message, RefreshState, State};
+use crate::app::{
+    ActionMessage, DownloadFilter, DownloadRowView, DownloadsMessage, Message, RefreshState, State,
+};
 
 pub fn view(state: &State) -> Element<'_, Message> {
-    let mut content = column![filter_bar(state)].spacing(12).width(Length::Fill);
+    let mut content = column![toolbar(state), filter_bar(state)]
+        .spacing(12)
+        .width(Length::Fill);
 
     if matches!(state.refresh_state(), RefreshState::Stale) {
         content = content.push(stale_banner(state));
@@ -19,6 +23,16 @@ pub fn view(state: &State) -> Element<'_, Message> {
     }
 
     container(content).width(Length::Fill).into()
+}
+
+fn toolbar(state: &State) -> Element<'_, Message> {
+    let purge = if state.can_purge_stopped() {
+        button("Purge stopped").on_press(Message::Action(ActionMessage::PurgeStopped))
+    } else {
+        button("Purge stopped")
+    };
+
+    row![purge].spacing(8).align_y(Alignment::Center).into()
 }
 
 fn filter_bar(state: &State) -> Element<'_, Message> {
@@ -48,25 +62,46 @@ fn stale_banner(state: &State) -> Element<'_, Message> {
 }
 
 fn download_row(row: DownloadRowView) -> Element<'static, Message> {
-    container(
-        column![
-            row![
-                text(row.name().to_owned()).size(16),
-                text(row.status().to_owned())
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-            row![
-                text(row.progress().to_owned()),
-                text(row.speed().to_owned()),
-                text(format!("GID {}", row.gid())),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
+    let pause = if row.can_pause() {
+        button("Pause").on_press(Message::Action(ActionMessage::Pause(row.gid_value())))
+    } else {
+        button("Pause")
+    };
+    let unpause = if row.can_unpause() {
+        button("Unpause").on_press(Message::Action(ActionMessage::Unpause(row.gid_value())))
+    } else {
+        button("Unpause")
+    };
+    let remove = if row.can_remove() {
+        button("Remove").on_press(Message::Action(ActionMessage::Remove(row.gid_value())))
+    } else {
+        button("Remove")
+    };
+
+    let mut content = column![
+        row![
+            text(row.name().to_owned()).size(16),
+            text(row.status().to_owned())
         ]
-        .spacing(4),
-    )
-    .padding(8)
-    .width(Length::Fill)
-    .into()
+        .spacing(12)
+        .align_y(Alignment::Center),
+        row![
+            text(row.progress().to_owned()),
+            text(row.speed().to_owned()),
+            text(format!("GID {}", row.gid())),
+            text(if row.pending() { "Pending" } else { "" }),
+            pause,
+            unpause,
+            remove,
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(4);
+
+    if let Some(error) = row.error() {
+        content = content.push(text(error.to_owned()));
+    }
+
+    container(content).padding(8).width(Length::Fill).into()
 }

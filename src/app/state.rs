@@ -1,5 +1,6 @@
+use crate::app::{ActionMessage, ActionTarget};
 use crate::aria2::client::ConnectionTest;
-use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, GlobalStats};
+use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats};
 use crate::aria2::errors::ClientError;
 use crate::config::{RpcAuthDraft, Settings, SettingsDraft};
 use crate::util::format::{format_bytes, format_speed};
@@ -67,9 +68,15 @@ pub enum RefreshState {
 pub struct DownloadRowView {
     name: String,
     gid: String,
+    gid_value: Gid,
     status: String,
     progress: String,
     speed: String,
+    can_pause: bool,
+    can_unpause: bool,
+    can_remove: bool,
+    pending: bool,
+    error: Option<String>,
 }
 
 impl DownloadRowView {
@@ -79,6 +86,10 @@ impl DownloadRowView {
 
     pub fn gid(&self) -> &str {
         &self.gid
+    }
+
+    pub fn gid_value(&self) -> Gid {
+        self.gid_value.clone()
     }
 
     pub fn status(&self) -> &str {
@@ -92,6 +103,26 @@ impl DownloadRowView {
     pub fn speed(&self) -> &str {
         &self.speed
     }
+
+    pub fn can_pause(&self) -> bool {
+        self.can_pause
+    }
+
+    pub fn can_unpause(&self) -> bool {
+        self.can_unpause
+    }
+
+    pub fn can_remove(&self) -> bool {
+        self.can_remove
+    }
+
+    pub fn pending(&self) -> bool {
+        self.pending
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +132,7 @@ pub struct State {
     settings: SettingsState,
     stats: StatsState,
     downloads: DownloadsState,
+    actions: ActionsState,
 }
 
 impl State {
@@ -134,6 +166,11 @@ impl State {
                 items: Vec::new(),
                 filter: DownloadFilter::All,
                 refresh_state: RefreshState::NeverRefreshed,
+                feedback: None,
+            },
+            actions: ActionsState {
+                generation: 0,
+                pending: None,
                 feedback: None,
             },
         }
@@ -244,7 +281,10 @@ impl State {
     }
 
     pub fn refresh_feedback(&self) -> Option<&str> {
-        self.downloads.feedback.as_deref()
+        self.downloads
+            .feedback
+            .as_deref()
+            .or(self.actions.feedback.as_deref())
     }
 
     pub fn selected_filter(&self) -> DownloadFilter {
@@ -264,8 +304,19 @@ impl State {
             .items
             .iter()
             .filter(|item| self.downloads.filter.matches(item))
-            .map(download_row_view)
+            .map(|item| download_row_view(item, &self.actions))
             .collect()
+    }
+
+    pub fn can_purge_stopped(&self) -> bool {
+        self.is_connected()
+            && self.actions.pending.is_none()
+            && self.downloads.items.iter().any(|item| {
+                matches!(
+                    item.status(),
+                    DownloadStatus::Complete | DownloadStatus::Error
+                )
+            })
     }
 
     pub fn downloads_empty_text(&self) -> Option<String> {
@@ -415,6 +466,83 @@ impl State {
         self.downloads.filter = filter;
     }
 
+    pub(super) fn begin_action(
+        &mut self,
+        message: ActionMessage,
+    ) -> Option<(u64, Settings, RunningAction)> {
+        if self.actions.pending.is_some() {
+            return None;
+        }
+
+        let settings = self.connection.settings.clone()?;
+        let action = match message {
+            ActionMessage::Pause(gid) => {
+                if !self.can_pause(&gid) {
+                    return None;
+                }
+                RunningAction::Pause(gid)
+            }
+            ActionMessage::Unpause(gid) => {
+                if !self.can_unpause(&gid) {
+                    return None;
+                }
+                RunningAction::Unpause(gid)
+            }
+            ActionMessage::Remove(gid) => {
+                if !self.can_remove(&gid) {
+                    return None;
+                }
+                RunningAction::Remove(gid)
+            }
+            ActionMessage::PurgeStopped => {
+                if !self.can_purge_stopped() {
+                    return None;
+                }
+                RunningAction::PurgeStopped
+            }
+            ActionMessage::Finished { .. } => return None,
+        };
+
+        self.actions.generation += 1;
+        self.actions.feedback = None;
+        self.actions.pending = Some(action.clone());
+
+        Some((self.actions.generation, settings, action))
+    }
+
+    pub(super) fn finish_action(
+        &mut self,
+        generation: u64,
+        target: ActionTarget,
+        result: Result<(), ClientError>,
+    ) -> bool {
+        if generation != self.actions.generation {
+            return false;
+        }
+
+        self.actions.pending = None;
+
+        match result {
+            Ok(()) => {
+                self.actions.feedback = None;
+                self.downloads.feedback = None;
+                true
+            }
+            Err(error) => {
+                let message = error.display_message().to_owned();
+                match target {
+                    ActionTarget::Download(gid) => {
+                        self.set_item_error(&gid, message);
+                    }
+                    ActionTarget::PurgeStopped => {
+                        self.actions.feedback = Some(message);
+                    }
+                }
+                false
+            }
+        }
+    }
+
     pub(super) fn open_settings(&mut self) {
         self.settings.open = true;
         self.settings.feedback = self
@@ -541,6 +669,55 @@ impl State {
         self.downloads.items.clear();
         self.downloads.refresh_state = RefreshState::NeverRefreshed;
         self.downloads.feedback = None;
+        self.actions.pending = None;
+        self.actions.feedback = None;
+    }
+
+    fn can_pause(&self, gid: &Gid) -> bool {
+        self.is_connected()
+            && self.actions.pending.is_none()
+            && self
+                .downloads
+                .items
+                .iter()
+                .any(|item| item.gid() == gid && matches!(item.status(), DownloadStatus::Active))
+    }
+
+    fn can_unpause(&self, gid: &Gid) -> bool {
+        self.is_connected()
+            && self.actions.pending.is_none()
+            && self.downloads.items.iter().any(|item| {
+                item.gid() == gid
+                    && matches!(
+                        item.status(),
+                        DownloadStatus::Paused | DownloadStatus::Waiting
+                    )
+            })
+    }
+
+    fn can_remove(&self, gid: &Gid) -> bool {
+        self.is_connected()
+            && self.actions.pending.is_none()
+            && self.downloads.items.iter().any(|item| {
+                item.gid() == gid
+                    && !matches!(
+                        item.status(),
+                        DownloadStatus::Complete | DownloadStatus::Removed
+                    )
+            })
+    }
+
+    fn set_item_error(&mut self, gid: &Gid, message: String) {
+        if let Some(item) = self
+            .downloads
+            .items
+            .iter_mut()
+            .find(|item| item.gid() == gid)
+        {
+            item.set_command_error(Some(message));
+        } else {
+            self.actions.feedback = Some(message);
+        }
     }
 }
 
@@ -583,6 +760,39 @@ struct DownloadsState {
     feedback: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActionsState {
+    generation: u64,
+    pending: Option<RunningAction>,
+    feedback: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunningAction {
+    Pause(Gid),
+    Unpause(Gid),
+    Remove(Gid),
+    PurgeStopped,
+}
+
+impl RunningAction {
+    pub fn target(&self) -> ActionTarget {
+        match self {
+            Self::Pause(gid) | Self::Unpause(gid) | Self::Remove(gid) => {
+                ActionTarget::Download(gid.clone())
+            }
+            Self::PurgeStopped => ActionTarget::PurgeStopped,
+        }
+    }
+
+    fn gid(&self) -> Option<&Gid> {
+        match self {
+            Self::Pause(gid) | Self::Unpause(gid) | Self::Remove(gid) => Some(gid),
+            Self::PurgeStopped => None,
+        }
+    }
+}
+
 fn connection_label(status: ConnectionStatus) -> &'static str {
     match status {
         ConnectionStatus::Offline => "Offline",
@@ -592,13 +802,34 @@ fn connection_label(status: ConnectionStatus) -> &'static str {
     }
 }
 
-fn download_row_view(item: &DownloadItem) -> DownloadRowView {
+fn download_row_view(item: &DownloadItem, actions: &ActionsState) -> DownloadRowView {
+    let pending = actions
+        .pending
+        .as_ref()
+        .and_then(RunningAction::gid)
+        .is_some_and(|gid| gid == item.gid());
+    let action_available = actions.pending.is_none();
+
     DownloadRowView {
         name: download_name(item),
         gid: item.gid().as_str().to_owned(),
+        gid_value: item.gid().clone(),
         status: item.status().display_label().to_owned(),
         progress: progress_text(item),
         speed: speed_text(item),
+        can_pause: action_available && matches!(item.status(), DownloadStatus::Active),
+        can_unpause: action_available
+            && matches!(
+                item.status(),
+                DownloadStatus::Paused | DownloadStatus::Waiting
+            ),
+        can_remove: action_available
+            && !matches!(
+                item.status(),
+                DownloadStatus::Complete | DownloadStatus::Removed
+            ),
+        pending,
+        error: item.command_error().map(str::to_owned),
     }
 }
 

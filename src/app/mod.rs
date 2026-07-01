@@ -6,7 +6,8 @@ mod update;
 use iced::{Element, Task};
 
 pub use message::{
-    AddMessage, ConnectionMessage, DownloadsMessage, Message, SettingsMessage, ToolbarMessage,
+    ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
+    SettingsMessage, ToolbarMessage,
 };
 pub use state::{ConnectionStatus, DownloadFilter, DownloadRowView, RefreshState, State};
 
@@ -39,8 +40,9 @@ mod tests {
     use crate::config::{RpcAuthDraft, Settings};
 
     use super::{
-        AddMessage, ConnectionMessage, ConnectionStatus, DownloadFilter, DownloadsMessage, Message,
-        RefreshState, SettingsMessage, State, ToolbarMessage,
+        ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
+        DownloadFilter, DownloadsMessage, Message, RefreshState, SettingsMessage, State,
+        ToolbarMessage,
     };
 
     #[test]
@@ -341,6 +343,126 @@ mod tests {
     }
 
     #[test]
+    fn row_action_enablement_follows_status_and_pending_state() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("active-gid", DownloadStatus::Active),
+                download_item("paused-gid", DownloadStatus::Paused),
+                download_item("complete-gid", DownloadStatus::Complete),
+            ],
+        );
+
+        let rows = state.download_rows();
+        assert!(rows[0].can_pause());
+        assert!(!rows[0].can_unpause());
+        assert!(rows[0].can_remove());
+        assert!(!rows[2].can_remove());
+        assert!(state.can_purge_stopped());
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        let rows = state.download_rows();
+        assert!(rows[0].pending());
+        assert!(!rows[1].can_unpause());
+    }
+
+    #[test]
+    fn action_success_triggers_snapshot_refresh_without_retrying_command() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+        assert!(!state.download_rows()[0].pending());
+    }
+
+    #[test]
+    fn row_action_error_attaches_to_download_and_does_not_refresh() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Err(ClientError::Rpc {
+                    code: 1,
+                    message: "cannot pause".to_owned(),
+                }),
+            }),
+        );
+
+        assert_eq!(state.refresh_state(), RefreshState::Fresh);
+        assert_eq!(
+            state.download_rows()[0].error(),
+            Some("aria2 returned an RPC error.")
+        );
+    }
+
+    #[test]
+    fn purge_error_is_global_status_feedback() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("complete-gid", DownloadStatus::Complete)],
+        );
+
+        let _task = super::update(&mut state, Message::Action(ActionMessage::PurgeStopped));
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::PurgeStopped,
+                result: Err(ClientError::Transport("connection refused".to_owned())),
+            }),
+        );
+
+        assert_eq!(
+            state.refresh_feedback(),
+            Some("Connection failed. Check the endpoint and secret.")
+        );
+        assert_eq!(state.refresh_state(), RefreshState::Fresh);
+    }
+
+    #[test]
     fn global_stats_are_unavailable_but_displayable_before_refresh() {
         let state = State::initial();
 
@@ -514,6 +636,17 @@ mod tests {
 
     fn snapshot_with_items(items: Vec<DownloadItem>) -> DownloadSnapshot {
         DownloadSnapshot::new(GlobalStats::new(1_536, 512, 2, 3, 4), items)
+    }
+
+    fn apply_snapshot(state: &mut State, items: Vec<DownloadItem>) {
+        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
+        let _task = super::update(
+            state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation,
+                result: Ok(snapshot_with_items(items)),
+            }),
+        );
     }
 
     fn download_item(gid: &str, status: DownloadStatus) -> DownloadItem {

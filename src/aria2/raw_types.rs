@@ -122,6 +122,25 @@ pub fn parse_add_uri_response(body: &str, expected_id: RequestId) -> Result<Gid,
     Gid::new(gid).map_err(|error| ClientError::MalformedResponse(error.message().to_owned()))
 }
 
+pub fn parse_gid_command_response(body: &str, expected_id: RequestId) -> Result<Gid, ClientError> {
+    parse_add_uri_response(body, expected_id)
+}
+
+pub fn parse_ok_response(body: &str, expected_id: RequestId) -> Result<(), ClientError> {
+    let envelope: JsonRpcEnvelope<String> = parse_envelope(body, expected_id)?;
+    let result = envelope
+        .result
+        .ok_or_else(|| ClientError::MalformedResponse("missing command result".to_owned()))?;
+
+    if result == "OK" {
+        Ok(())
+    } else {
+        Err(ClientError::MalformedResponse(
+            "command result must be OK".to_owned(),
+        ))
+    }
+}
+
 fn parse_envelope<T>(body: &str, expected_id: RequestId) -> Result<JsonRpcEnvelope<T>, ClientError>
 where
     T: for<'de> Deserialize<'de>,
@@ -199,7 +218,7 @@ fn parse_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
 mod tests {
     use super::{
         parse_add_uri_response, parse_download_items_response, parse_get_version_response,
-        parse_global_stats_response,
+        parse_gid_command_response, parse_global_stats_response, parse_ok_response,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::methods::RequestId;
@@ -351,6 +370,37 @@ mod tests {
             RequestId::new(31),
         )
         .expect_err("empty gid should fail");
+
+        assert!(matches!(error, ClientError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn parses_gid_command_response() {
+        let gid = parse_gid_command_response(
+            r#"{"jsonrpc":"2.0","id":41,"result":"abc123"}"#,
+            RequestId::new(41),
+        )
+        .expect("valid gid command result");
+
+        assert_eq!(gid.as_str(), "abc123");
+    }
+
+    #[test]
+    fn parses_ok_command_response() {
+        parse_ok_response(
+            r#"{"jsonrpc":"2.0","id":44,"result":"OK"}"#,
+            RequestId::new(44),
+        )
+        .expect("valid OK response");
+    }
+
+    #[test]
+    fn rejects_non_ok_command_response() {
+        let error = parse_ok_response(
+            r#"{"jsonrpc":"2.0","id":44,"result":"NO"}"#,
+            RequestId::new(44),
+        )
+        .expect_err("non OK should fail");
 
         assert!(matches!(error, ClientError::MalformedResponse(_)));
     }

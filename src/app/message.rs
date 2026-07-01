@@ -9,10 +9,30 @@ use crate::config::Settings;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Add(AddMessage),
+    Action(ActionMessage),
     Connection(ConnectionMessage),
     Downloads(DownloadsMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionMessage {
+    Pause(Gid),
+    Unpause(Gid),
+    Remove(Gid),
+    PurgeStopped,
+    Finished {
+        generation: u64,
+        target: ActionTarget,
+        result: Result<(), ClientError>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionTarget {
+    Download(Gid),
+    PurgeStopped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

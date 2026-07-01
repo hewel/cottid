@@ -2,6 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::aria2::domain::Gid;
 use crate::config::Secret;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -128,6 +129,44 @@ pub fn build_add_uri_request(id: RequestId, secret: Option<&Secret>, uri: &str) 
     }
 }
 
+pub fn build_pause_request(id: RequestId, secret: Option<&Secret>, gid: &Gid) -> JsonRpcRequest {
+    build_gid_command_request(id, secret, "aria2.pause", gid)
+}
+
+pub fn build_unpause_request(id: RequestId, secret: Option<&Secret>, gid: &Gid) -> JsonRpcRequest {
+    build_gid_command_request(id, secret, "aria2.unpause", gid)
+}
+
+pub fn build_remove_request(id: RequestId, secret: Option<&Secret>, gid: &Gid) -> JsonRpcRequest {
+    build_gid_command_request(id, secret, "aria2.remove", gid)
+}
+
+pub fn build_purge_stopped_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.purgeDownloadResult",
+        params: token_params(secret),
+    }
+}
+
+fn build_gid_command_request(
+    id: RequestId,
+    secret: Option<&Secret>,
+    method: &'static str,
+    gid: &Gid,
+) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::String(gid.as_str().to_owned()));
+
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method,
+        params,
+    }
+}
+
 fn token_params(secret: Option<&Secret>) -> Vec<JsonRpcParam> {
     secret
         .map(|secret| JsonRpcParam::String(format!("token:{}", secret.expose_for_session())))
@@ -139,10 +178,12 @@ fn token_params(secret: Option<&Secret>) -> Vec<JsonRpcParam> {
 mod tests {
     use serde_json::Value;
 
+    use crate::aria2::domain::Gid;
     use crate::aria2::methods::{
         JsonRpcParam, RequestId, build_add_uri_request, build_get_global_stat_request,
-        build_get_version_request, build_tell_active_request, build_tell_stopped_request,
-        build_tell_waiting_request,
+        build_get_version_request, build_pause_request, build_purge_stopped_request,
+        build_remove_request, build_tell_active_request, build_tell_stopped_request,
+        build_tell_waiting_request, build_unpause_request,
     };
     use crate::config::Secret;
 
@@ -233,5 +274,26 @@ mod tests {
         assert_eq!(body["params"][0], "token:secret-value");
         assert_eq!(body["params"][1][0], "magnet:?xt=abc");
         assert!(!format!("{request:?}").contains("secret-value"));
+    }
+
+    #[test]
+    fn builds_gid_command_requests() {
+        let gid = Gid::new("abc123").expect("valid gid");
+        let pause = build_pause_request(RequestId::new(41), None, &gid);
+        let unpause = build_unpause_request(RequestId::new(42), None, &gid);
+        let remove = build_remove_request(RequestId::new(43), None, &gid);
+
+        assert_eq!(pause.method(), "aria2.pause");
+        assert_eq!(unpause.method(), "aria2.unpause");
+        assert_eq!(remove.method(), "aria2.remove");
+        assert_eq!(pause.params(), &[JsonRpcParam::String("abc123".to_owned())]);
+    }
+
+    #[test]
+    fn builds_purge_stopped_request() {
+        let request = build_purge_stopped_request(RequestId::new(44), None);
+
+        assert_eq!(request.method(), "aria2.purgeDownloadResult");
+        assert!(request.params().is_empty());
     }
 }

@@ -126,6 +126,7 @@ pub struct DownloadItem {
     download_speed_bytes_per_second: u64,
     upload_speed_bytes_per_second: u64,
     files: Vec<DownloadFile>,
+    command_error: Option<String>,
 }
 
 impl DownloadItem {
@@ -146,6 +147,7 @@ impl DownloadItem {
             download_speed_bytes_per_second,
             upload_speed_bytes_per_second,
             files,
+            command_error: None,
         }
     }
 
@@ -175,6 +177,14 @@ impl DownloadItem {
 
     pub fn files(&self) -> &[DownloadFile] {
         &self.files
+    }
+
+    pub fn command_error(&self) -> Option<&str> {
+        self.command_error.as_deref()
+    }
+
+    pub fn set_command_error(&mut self, error: Option<String>) {
+        self.command_error = error;
     }
 }
 
