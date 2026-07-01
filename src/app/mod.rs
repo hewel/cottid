@@ -7,9 +7,11 @@ use iced::{Element, Task};
 
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
-    SettingsMessage, ToolbarMessage,
+    SelectionMessage, SettingsMessage, ToolbarMessage,
 };
-pub use state::{ConnectionStatus, DownloadFilter, DownloadRowView, RefreshState, State};
+pub use state::{
+    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, RefreshState, State,
+};
 
 pub fn run() -> iced::Result {
     iced::application(State::initial, update, view)
@@ -41,8 +43,8 @@ mod tests {
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadsMessage, Message, RefreshState, SettingsMessage, State,
-        ToolbarMessage,
+        DownloadFilter, DownloadsMessage, Message, RefreshState, SelectionMessage, SettingsMessage,
+        State, ToolbarMessage,
     };
 
     #[test]
@@ -460,6 +462,94 @@ mod tests {
             Some("Connection failed. Check the endpoint and secret.")
         );
         assert_eq!(state.refresh_state(), RefreshState::Fresh);
+    }
+
+    #[test]
+    fn selecting_download_marks_row_and_builds_detail_view() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Selection(SelectionMessage::Select(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        assert_eq!(state.selected_gid().map(Gid::as_str), Some("active-gid"));
+        assert!(state.download_rows()[0].selected());
+
+        let detail = state.selected_download_detail().expect("selected detail");
+        assert_eq!(detail.gid(), "active-gid");
+        assert_eq!(detail.status(), "Active");
+        assert_eq!(detail.progress(), "50% | 1.0 KiB / 2.0 KiB");
+        assert_eq!(detail.speeds(), "Down 512 B/s");
+        assert_eq!(detail.files()[0], "/tmp/active-gid.bin | 1.0 KiB / 2.0 KiB");
+    }
+
+    #[test]
+    fn disappeared_selected_download_clears_selection() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Selection(SelectionMessage::Select(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        apply_snapshot(
+            &mut state,
+            vec![download_item("other-gid", DownloadStatus::Active)],
+        );
+
+        assert_eq!(state.selected_gid(), None);
+        assert_eq!(state.selected_download_detail(), None);
+    }
+
+    #[test]
+    fn detail_error_is_display_safe() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Selection(SelectionMessage::Select(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Err(ClientError::Rpc {
+                    code: 1,
+                    message: "token:super-secret failed".to_owned(),
+                }),
+            }),
+        );
+
+        let detail = state.selected_download_detail().expect("selected detail");
+        assert_eq!(detail.error(), Some("aria2 returned an RPC error."));
+        assert!(!format!("{detail:?}").contains("super-secret"));
     }
 
     #[test]

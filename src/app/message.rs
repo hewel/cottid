@@ -12,8 +12,15 @@ pub enum Message {
     Action(ActionMessage),
     Connection(ConnectionMessage),
     Downloads(DownloadsMessage),
+    Selection(SelectionMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectionMessage {
+    Select(Gid),
+    Clear,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

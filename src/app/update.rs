@@ -2,8 +2,8 @@ use iced::Task;
 
 use super::state::RunningAction;
 use super::{
-    ActionMessage, AddMessage, ConnectionMessage, DownloadsMessage, Message, SettingsMessage,
-    State, ToolbarMessage,
+    ActionMessage, AddMessage, ConnectionMessage, DownloadsMessage, Message, SelectionMessage,
+    SettingsMessage, State, ToolbarMessage,
 };
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -12,8 +12,22 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Action(message) => update_action(state, message),
         Message::Connection(message) => update_connection(state, message),
         Message::Downloads(message) => update_downloads(state, message),
+        Message::Selection(message) => update_selection(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+    }
+}
+
+fn update_selection(state: &mut State, message: SelectionMessage) -> Task<Message> {
+    match message {
+        SelectionMessage::Select(gid) => {
+            state.select_download(gid);
+            Task::none()
+        }
+        SelectionMessage::Clear => {
+            state.clear_selection();
+            Task::none()
+        }
     }
 }
 

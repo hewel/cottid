@@ -77,6 +77,7 @@ pub struct DownloadRowView {
     can_remove: bool,
     pending: bool,
     error: Option<String>,
+    selected: bool,
 }
 
 impl DownloadRowView {
@@ -123,6 +124,56 @@ impl DownloadRowView {
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
+    pub fn selected(&self) -> bool {
+        self.selected
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadDetailView {
+    name: String,
+    gid: String,
+    status: String,
+    progress: String,
+    speeds: String,
+    totals: String,
+    files: Vec<String>,
+    error: Option<String>,
+}
+
+impl DownloadDetailView {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn gid(&self) -> &str {
+        &self.gid
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    pub fn progress(&self) -> &str {
+        &self.progress
+    }
+
+    pub fn speeds(&self) -> &str {
+        &self.speeds
+    }
+
+    pub fn totals(&self) -> &str {
+        &self.totals
+    }
+
+    pub fn files(&self) -> &[String] {
+        &self.files
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +184,7 @@ pub struct State {
     stats: StatsState,
     downloads: DownloadsState,
     actions: ActionsState,
+    selection: SelectionState,
 }
 
 impl State {
@@ -173,6 +225,7 @@ impl State {
                 pending: None,
                 feedback: None,
             },
+            selection: SelectionState { selected_gid: None },
         }
     }
 
@@ -291,6 +344,11 @@ impl State {
         self.downloads.filter
     }
 
+    #[cfg(test)]
+    pub fn selected_gid(&self) -> Option<&Gid> {
+        self.selection.selected_gid.as_ref()
+    }
+
     pub fn filter_count(&self, filter: DownloadFilter) -> usize {
         self.downloads
             .items
@@ -304,8 +362,27 @@ impl State {
             .items
             .iter()
             .filter(|item| self.downloads.filter.matches(item))
-            .map(|item| download_row_view(item, &self.actions))
+            .map(|item| {
+                download_row_view(item, &self.actions, self.selection.selected_gid.as_ref())
+            })
             .collect()
+    }
+
+    pub fn selected_download_detail(&self) -> Option<DownloadDetailView> {
+        let selected_gid = self.selection.selected_gid.as_ref()?;
+        self.downloads
+            .items
+            .iter()
+            .find(|item| item.gid() == selected_gid)
+            .map(download_detail_view)
+    }
+
+    pub fn detail_empty_text(&self) -> &'static str {
+        if self.downloads.items.is_empty() {
+            "No download selected."
+        } else {
+            "Select a download to inspect details."
+        }
     }
 
     pub fn can_purge_stopped(&self) -> bool {
@@ -448,6 +525,7 @@ impl State {
                 let (global_stats, items) = snapshot.into_parts();
                 self.stats.global = Some(global_stats);
                 self.downloads.items = items;
+                self.clear_missing_selection();
                 self.downloads.refresh_state = RefreshState::Fresh;
                 self.downloads.feedback = None;
             }
@@ -464,6 +542,16 @@ impl State {
 
     pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {
         self.downloads.filter = filter;
+    }
+
+    pub(super) fn select_download(&mut self, gid: Gid) {
+        if self.downloads.items.iter().any(|item| item.gid() == &gid) {
+            self.selection.selected_gid = Some(gid);
+        }
+    }
+
+    pub(super) fn clear_selection(&mut self) {
+        self.selection.selected_gid = None;
     }
 
     pub(super) fn begin_action(
@@ -671,6 +759,7 @@ impl State {
         self.downloads.feedback = None;
         self.actions.pending = None;
         self.actions.feedback = None;
+        self.selection.selected_gid = None;
     }
 
     fn can_pause(&self, gid: &Gid) -> bool {
@@ -717,6 +806,21 @@ impl State {
             item.set_command_error(Some(message));
         } else {
             self.actions.feedback = Some(message);
+        }
+    }
+
+    fn clear_missing_selection(&mut self) {
+        let Some(selected_gid) = self.selection.selected_gid.as_ref() else {
+            return;
+        };
+
+        if !self
+            .downloads
+            .items
+            .iter()
+            .any(|item| item.gid() == selected_gid)
+        {
+            self.selection.selected_gid = None;
         }
     }
 }
@@ -768,6 +872,11 @@ struct ActionsState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectionState {
+    selected_gid: Option<Gid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunningAction {
     Pause(Gid),
     Unpause(Gid),
@@ -802,7 +911,11 @@ fn connection_label(status: ConnectionStatus) -> &'static str {
     }
 }
 
-fn download_row_view(item: &DownloadItem, actions: &ActionsState) -> DownloadRowView {
+fn download_row_view(
+    item: &DownloadItem,
+    actions: &ActionsState,
+    selected_gid: Option<&Gid>,
+) -> DownloadRowView {
     let pending = actions
         .pending
         .as_ref()
@@ -829,6 +942,43 @@ fn download_row_view(item: &DownloadItem, actions: &ActionsState) -> DownloadRow
                 DownloadStatus::Complete | DownloadStatus::Removed
             ),
         pending,
+        error: item.command_error().map(str::to_owned),
+        selected: selected_gid.is_some_and(|gid| gid == item.gid()),
+    }
+}
+
+fn download_detail_view(item: &DownloadItem) -> DownloadDetailView {
+    DownloadDetailView {
+        name: download_name(item),
+        gid: item.gid().as_str().to_owned(),
+        status: item.status().display_label().to_owned(),
+        progress: progress_text(item),
+        speeds: speed_text(item),
+        totals: format!(
+            "Completed {} | Total {}",
+            format_bytes(item.completed_length_bytes()),
+            if item.total_length_bytes() == 0 {
+                "unknown".to_owned()
+            } else {
+                format_bytes(item.total_length_bytes())
+            }
+        ),
+        files: item
+            .files()
+            .iter()
+            .map(|file| {
+                format!(
+                    "{} | {} / {}",
+                    file.path(),
+                    format_bytes(file.completed_length_bytes()),
+                    if file.length_bytes() == 0 {
+                        "unknown".to_owned()
+                    } else {
+                        format_bytes(file.length_bytes())
+                    }
+                )
+            })
+            .collect(),
         error: item.command_error().map(str::to_owned),
     }
 }

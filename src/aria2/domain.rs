@@ -102,12 +102,10 @@ impl DownloadFile {
         &self.path
     }
 
-    #[cfg(test)]
     pub fn length_bytes(&self) -> u64 {
         self.length_bytes
     }
 
-    #[cfg(test)]
     pub fn completed_length_bytes(&self) -> u64 {
         self.completed_length_bytes
     }

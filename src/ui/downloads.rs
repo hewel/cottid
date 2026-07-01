@@ -2,7 +2,8 @@ use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
-    ActionMessage, DownloadFilter, DownloadRowView, DownloadsMessage, Message, RefreshState, State,
+    ActionMessage, DownloadDetailView, DownloadFilter, DownloadRowView, DownloadsMessage, Message,
+    RefreshState, SelectionMessage, State,
 };
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -21,6 +22,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
             content = content.push(download_row(row));
         }
     }
+
+    content = content.push(detail_panel(state));
 
     container(content).width(Length::Fill).into()
 }
@@ -62,6 +65,9 @@ fn stale_banner(state: &State) -> Element<'_, Message> {
 }
 
 fn download_row(row: DownloadRowView) -> Element<'static, Message> {
+    let select = button(if row.selected() { "Selected" } else { "Select" }).on_press(
+        Message::Selection(SelectionMessage::Select(row.gid_value())),
+    );
     let pause = if row.can_pause() {
         button("Pause").on_press(Message::Action(ActionMessage::Pause(row.gid_value())))
     } else {
@@ -90,6 +96,7 @@ fn download_row(row: DownloadRowView) -> Element<'static, Message> {
             text(row.speed().to_owned()),
             text(format!("GID {}", row.gid())),
             text(if row.pending() { "Pending" } else { "" }),
+            select,
             pause,
             unpause,
             remove,
@@ -100,6 +107,44 @@ fn download_row(row: DownloadRowView) -> Element<'static, Message> {
     .spacing(4);
 
     if let Some(error) = row.error() {
+        content = content.push(text(error.to_owned()));
+    }
+
+    container(content).padding(8).width(Length::Fill).into()
+}
+
+fn detail_panel(state: &State) -> Element<'_, Message> {
+    if let Some(detail) = state.selected_download_detail() {
+        return detail_content(detail);
+    }
+
+    container(text(state.detail_empty_text()))
+        .padding(8)
+        .width(Length::Fill)
+        .into()
+}
+
+fn detail_content(detail: DownloadDetailView) -> Element<'static, Message> {
+    let mut content = column![
+        row![
+            text(detail.name().to_owned()).size(18),
+            button("Clear").on_press(Message::Selection(SelectionMessage::Clear)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center),
+        text(format!("GID {}", detail.gid())),
+        text(format!("Status {}", detail.status())),
+        text(detail.progress().to_owned()),
+        text(detail.speeds().to_owned()),
+        text(detail.totals().to_owned()),
+    ]
+    .spacing(6);
+
+    for file in detail.files() {
+        content = content.push(text(file.to_owned()));
+    }
+
+    if let Some(error) = detail.error() {
         content = content.push(text(error.to_owned()));
     }
 
