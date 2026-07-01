@@ -81,45 +81,95 @@ impl HttpResponse {
     }
 }
 
+#[cfg(test)]
 pub trait Transport {
     fn post(&self, request: HttpPost) -> Result<HttpResponse, ClientError>;
 }
 
-pub fn test_connection(settings: Settings) -> Result<ConnectionTest, ClientError> {
+pub async fn test_connection(settings: Settings) -> Result<ConnectionTest, ClientError> {
     let transport = ReqwestTransport::new();
-    test_connection_with_transport(&settings, &transport)
+    let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, secret(&settings));
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+    let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
+
+    Ok(ConnectionTest { version })
 }
 
-pub fn fetch_download_snapshot(settings: Settings) -> Result<DownloadSnapshot, ClientError> {
+pub async fn fetch_download_snapshot(settings: Settings) -> Result<DownloadSnapshot, ClientError> {
     let transport = ReqwestTransport::new();
-    fetch_download_snapshot_with_transport(&settings, &transport)
+    let global_stats = fetch_global_stats_async(&settings, &transport).await?;
+    let secret = secret(&settings);
+
+    let active = fetch_download_items_async(
+        &settings,
+        &transport,
+        build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
+        TELL_ACTIVE_REQUEST_ID,
+    )
+    .await?;
+    let waiting = fetch_download_items_async(
+        &settings,
+        &transport,
+        build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
+        TELL_WAITING_REQUEST_ID,
+    )
+    .await?;
+    let stopped = fetch_download_items_async(
+        &settings,
+        &transport,
+        build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret),
+        TELL_STOPPED_REQUEST_ID,
+    )
+    .await?;
+
+    let mut items = active;
+    items.extend(waiting);
+    items.extend(stopped);
+
+    Ok(DownloadSnapshot::new(global_stats, items))
 }
 
-pub fn add_uri(settings: Settings, uri: String) -> Result<Gid, ClientError> {
+pub async fn add_uri(settings: Settings, uri: String) -> Result<Gid, ClientError> {
     let transport = ReqwestTransport::new();
-    add_uri_with_transport(&settings, &transport, &uri)
+    let request = build_add_uri_request(ADD_URI_REQUEST_ID, secret(&settings), &uri);
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
 }
 
-pub fn pause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
+pub async fn pause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
     let transport = ReqwestTransport::new();
-    pause_with_transport(&settings, &transport, &gid)
+    let request = build_pause_request(PAUSE_REQUEST_ID, secret(&settings), &gid);
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    parse_gid_command_response(&body, PAUSE_REQUEST_ID)
 }
 
-pub fn unpause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
+pub async fn unpause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
     let transport = ReqwestTransport::new();
-    unpause_with_transport(&settings, &transport, &gid)
+    let request = build_unpause_request(UNPAUSE_REQUEST_ID, secret(&settings), &gid);
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    parse_gid_command_response(&body, UNPAUSE_REQUEST_ID)
 }
 
-pub fn remove(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
+pub async fn remove(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
     let transport = ReqwestTransport::new();
-    remove_with_transport(&settings, &transport, &gid)
+    let request = build_remove_request(REMOVE_REQUEST_ID, secret(&settings), &gid);
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    parse_gid_command_response(&body, REMOVE_REQUEST_ID)
 }
 
-pub fn purge_stopped(settings: Settings) -> Result<(), ClientError> {
+pub async fn purge_stopped(settings: Settings) -> Result<(), ClientError> {
     let transport = ReqwestTransport::new();
-    purge_stopped_with_transport(&settings, &transport)
+    let request = build_purge_stopped_request(PURGE_STOPPED_REQUEST_ID, secret(&settings));
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
 }
 
+#[cfg(test)]
 pub fn test_connection_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -131,6 +181,7 @@ pub fn test_connection_with_transport(
     Ok(ConnectionTest { version })
 }
 
+#[cfg(test)]
 pub fn fetch_global_stats_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -141,6 +192,7 @@ pub fn fetch_global_stats_with_transport(
     parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
 }
 
+#[cfg(test)]
 pub fn fetch_download_snapshot_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -174,6 +226,7 @@ pub fn fetch_download_snapshot_with_transport(
     Ok(DownloadSnapshot::new(global_stats, items))
 }
 
+#[cfg(test)]
 pub fn add_uri_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -185,6 +238,7 @@ pub fn add_uri_with_transport(
     parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
 }
 
+#[cfg(test)]
 pub fn pause_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -196,6 +250,7 @@ pub fn pause_with_transport(
     parse_gid_command_response(&body, PAUSE_REQUEST_ID)
 }
 
+#[cfg(test)]
 pub fn unpause_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -207,6 +262,7 @@ pub fn unpause_with_transport(
     parse_gid_command_response(&body, UNPAUSE_REQUEST_ID)
 }
 
+#[cfg(test)]
 pub fn remove_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -218,6 +274,7 @@ pub fn remove_with_transport(
     parse_gid_command_response(&body, REMOVE_REQUEST_ID)
 }
 
+#[cfg(test)]
 pub fn purge_stopped_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -228,6 +285,7 @@ pub fn purge_stopped_with_transport(
     parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
 }
 
+#[cfg(test)]
 fn fetch_download_items(
     settings: &Settings,
     transport: &impl Transport,
@@ -239,6 +297,28 @@ fn fetch_download_items(
     parse_download_items_response(&body, request_id)
 }
 
+async fn fetch_global_stats_async(
+    settings: &Settings,
+    transport: &ReqwestTransport,
+) -> Result<GlobalStats, ClientError> {
+    let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, secret(settings));
+    let body = send_rpc_request_async(settings, transport, request).await?;
+
+    parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
+}
+
+async fn fetch_download_items_async(
+    settings: &Settings,
+    transport: &ReqwestTransport,
+    request: JsonRpcRequest,
+    request_id: RequestId,
+) -> Result<Vec<DownloadItem>, ClientError> {
+    let body = send_rpc_request_async(settings, transport, request).await?;
+
+    parse_download_items_response(&body, request_id)
+}
+
+#[cfg(test)]
 fn send_rpc_request(
     settings: &Settings,
     transport: &impl Transport,
@@ -258,6 +338,27 @@ fn send_rpc_request(
     Ok(response.body)
 }
 
+async fn send_rpc_request_async(
+    settings: &Settings,
+    transport: &ReqwestTransport,
+    request: JsonRpcRequest,
+) -> Result<String, ClientError> {
+    let body =
+        to_string(&request).map_err(|error| ClientError::MalformedResponse(error.to_string()))?;
+    let response = transport
+        .post(HttpPost {
+            endpoint: settings.endpoint().to_owned(),
+            body,
+        })
+        .await?;
+
+    if !(200..=299).contains(&response.status) {
+        return Err(ClientError::HttpStatus(response.status));
+    }
+
+    Ok(response.body)
+}
+
 fn secret(settings: &Settings) -> Option<&crate::config::Secret> {
     match settings.auth() {
         RpcAuth::NoSecret => None,
@@ -266,30 +367,30 @@ fn secret(settings: &Settings) -> Option<&crate::config::Secret> {
 }
 
 struct ReqwestTransport {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
 }
 
 impl ReqwestTransport {
     fn new() -> Self {
         Self {
-            client: reqwest::blocking::Client::new(),
+            client: reqwest::Client::new(),
         }
     }
-}
 
-impl Transport for ReqwestTransport {
-    fn post(&self, request: HttpPost) -> Result<HttpResponse, ClientError> {
+    async fn post(&self, request: HttpPost) -> Result<HttpResponse, ClientError> {
         let response = self
             .client
             .post(request.endpoint())
             .header("content-type", "application/json")
             .body(request.body().to_owned())
             .send()
+            .await
             .map_err(|error| ClientError::Transport(error.to_string()))?;
 
         let status = response.status().as_u16();
         let body = response
             .text()
+            .await
             .map_err(|error| ClientError::Transport(error.to_string()))?;
 
         Ok(HttpResponse { status, body })

@@ -46,16 +46,16 @@ fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
                 async move {
                     match action {
                         RunningAction::Pause(gid) => {
-                            crate::aria2::client::pause(settings, gid).map(|_| ())
+                            crate::aria2::client::pause(settings, gid).await.map(|_| ())
                         }
-                        RunningAction::Unpause(gid) => {
-                            crate::aria2::client::unpause(settings, gid).map(|_| ())
-                        }
-                        RunningAction::Remove(gid) => {
-                            crate::aria2::client::remove(settings, gid).map(|_| ())
-                        }
+                        RunningAction::Unpause(gid) => crate::aria2::client::unpause(settings, gid)
+                            .await
+                            .map(|_| ()),
+                        RunningAction::Remove(gid) => crate::aria2::client::remove(settings, gid)
+                            .await
+                            .map(|_| ()),
                         RunningAction::PurgeStopped => {
-                            crate::aria2::client::purge_stopped(settings)
+                            crate::aria2::client::purge_stopped(settings).await
                         }
                     }
                 },
@@ -80,7 +80,7 @@ fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
                 };
 
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings) },
+                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings).await },
                     move |result| {
                         Message::Downloads(DownloadsMessage::RefreshFinished {
                             generation: refresh_generation,
@@ -115,7 +115,7 @@ fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
             };
 
             Task::perform(
-                async move { crate::aria2::client::add_uri(settings, uri) },
+                async move { crate::aria2::client::add_uri(settings, uri).await },
                 move |result| Message::Add(AddMessage::SubmitFinished { generation, result }),
             )
         }
@@ -127,7 +127,7 @@ fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
                 };
 
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings) },
+                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings).await },
                     move |result| {
                         Message::Downloads(DownloadsMessage::RefreshFinished {
                             generation: refresh_generation,
@@ -152,7 +152,7 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
             let settings_for_test = settings.clone();
 
             Task::perform(
-                async move { crate::aria2::client::test_connection(settings_for_test) },
+                async move { crate::aria2::client::test_connection(settings_for_test).await },
                 move |result| {
                     Message::Connection(ConnectionMessage::TestFinished {
                         generation,
@@ -174,7 +174,7 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
                 };
 
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings) },
+                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings).await },
                     move |result| {
                         Message::Downloads(DownloadsMessage::RefreshFinished {
                             generation: refresh_generation,
@@ -197,7 +197,7 @@ fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Messag
             };
 
             Task::perform(
-                async move { crate::aria2::client::fetch_download_snapshot(settings) },
+                async move { crate::aria2::client::fetch_download_snapshot(settings).await },
                 move |result| {
                     Message::Downloads(DownloadsMessage::RefreshFinished { generation, result })
                 },
