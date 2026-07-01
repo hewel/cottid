@@ -5,6 +5,16 @@ use serde::{Deserialize, Serialize};
 use crate::aria2::domain::Gid;
 use crate::config::Secret;
 
+const DOWNLOAD_ITEM_KEYS: [&str; 7] = [
+    "gid",
+    "status",
+    "totalLength",
+    "completedLength",
+    "downloadSpeed",
+    "uploadSpeed",
+    "files",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct RequestId(u64);
@@ -27,6 +37,7 @@ pub struct JsonRpcRequest {
 #[serde(untagged)]
 pub enum JsonRpcParam {
     String(String),
+    Number(u64),
     StringList(Vec<String>),
 }
 
@@ -83,18 +94,22 @@ pub fn build_get_global_stat_request(id: RequestId, secret: Option<&Secret>) -> 
 }
 
 pub fn build_tell_active_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push(download_item_keys_param());
+
     JsonRpcRequest {
         jsonrpc: "2.0",
         id,
         method: "aria2.tellActive",
-        params: token_params(secret),
+        params,
     }
 }
 
 pub fn build_tell_waiting_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
     let mut params = token_params(secret);
-    params.push(JsonRpcParam::String("0".to_owned()));
-    params.push(JsonRpcParam::String("1000".to_owned()));
+    params.push(JsonRpcParam::Number(0));
+    params.push(JsonRpcParam::Number(1000));
+    params.push(download_item_keys_param());
 
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -106,8 +121,9 @@ pub fn build_tell_waiting_request(id: RequestId, secret: Option<&Secret>) -> Jso
 
 pub fn build_tell_stopped_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
     let mut params = token_params(secret);
-    params.push(JsonRpcParam::String("0".to_owned()));
-    params.push(JsonRpcParam::String("1000".to_owned()));
+    params.push(JsonRpcParam::Number(0));
+    params.push(JsonRpcParam::Number(1000));
+    params.push(download_item_keys_param());
 
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -174,8 +190,18 @@ fn token_params(secret: Option<&Secret>) -> Vec<JsonRpcParam> {
         .collect()
 }
 
+fn download_item_keys_param() -> JsonRpcParam {
+    JsonRpcParam::StringList(
+        DOWNLOAD_ITEM_KEYS
+            .iter()
+            .map(|key| (*key).to_owned())
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
+    use super::download_item_keys_param;
     use serde_json::Value;
 
     use crate::aria2::domain::Gid;
@@ -222,7 +248,11 @@ mod tests {
         let request = build_tell_active_request(RequestId::new(21), None);
 
         assert_eq!(request.method(), "aria2.tellActive");
-        assert!(request.params().is_empty());
+        assert_download_item_keys(&request.params()[0]);
+
+        let body = serde_json::to_value(&request).expect("request serializes");
+        assert_eq!(body["params"][0][0], "gid");
+        assert_eq!(body["params"][0][6], "files");
     }
 
     #[test]
@@ -233,10 +263,17 @@ mod tests {
         assert_eq!(
             request.params(),
             &[
-                JsonRpcParam::String("0".to_owned()),
-                JsonRpcParam::String("1000".to_owned())
+                JsonRpcParam::Number(0),
+                JsonRpcParam::Number(1000),
+                download_item_keys_param()
             ]
         );
+
+        let body = serde_json::to_value(&request).expect("request serializes");
+        assert_eq!(body["params"][0], 0);
+        assert_eq!(body["params"][1], 1000);
+        assert_eq!(body["params"][2][0], "gid");
+        assert_eq!(body["params"][2][6], "files");
     }
 
     #[test]
@@ -249,11 +286,19 @@ mod tests {
             request.params(),
             &[
                 JsonRpcParam::String("token:secret-value".to_owned()),
-                JsonRpcParam::String("0".to_owned()),
-                JsonRpcParam::String("1000".to_owned())
+                JsonRpcParam::Number(0),
+                JsonRpcParam::Number(1000),
+                download_item_keys_param()
             ]
         );
         assert!(!format!("{request:?}").contains("secret-value"));
+
+        let body = serde_json::to_value(&request).expect("request serializes");
+        assert_eq!(body["params"][0], "token:secret-value");
+        assert_eq!(body["params"][1], 0);
+        assert_eq!(body["params"][2], 1000);
+        assert_eq!(body["params"][3][0], "gid");
+        assert_eq!(body["params"][3][6], "files");
     }
 
     #[test]
@@ -295,5 +340,20 @@ mod tests {
 
         assert_eq!(request.method(), "aria2.purgeDownloadResult");
         assert!(request.params().is_empty());
+    }
+
+    fn assert_download_item_keys(param: &JsonRpcParam) {
+        assert_eq!(
+            param,
+            &JsonRpcParam::StringList(vec![
+                "gid".to_owned(),
+                "status".to_owned(),
+                "totalLength".to_owned(),
+                "completedLength".to_owned(),
+                "downloadSpeed".to_owned(),
+                "uploadSpeed".to_owned(),
+                "files".to_owned(),
+            ])
+        );
     }
 }

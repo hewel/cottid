@@ -573,6 +573,10 @@ impl State {
     pub(super) fn begin_downloads_refresh(&mut self) -> Option<(u64, Settings)> {
         let settings = self.connection.settings.clone()?;
 
+        if matches!(self.downloads.refresh_state, RefreshState::Refreshing) {
+            return None;
+        }
+
         self.downloads.generation += 1;
         self.downloads.refresh_state = RefreshState::Refreshing;
         self.downloads.feedback = None;

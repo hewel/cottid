@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
@@ -25,7 +25,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     content = content.push(detail_panel(state));
 
-    container(content).width(Length::Fill).into()
+    scrollable(container(content).width(Length::Fill))
+        .height(Length::Fill)
+        .into()
 }
 
 fn toolbar(state: &State) -> Element<'_, Message> {

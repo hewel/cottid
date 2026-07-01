@@ -568,6 +568,21 @@ mod tests {
                 "aria2.tellStopped"
             ]
         );
+
+        let posts = transport.posts.borrow();
+        let active_body: Value = serde_json::from_str(posts[1].body()).expect("active request");
+        let waiting_body: Value = serde_json::from_str(posts[2].body()).expect("waiting request");
+        let stopped_body: Value = serde_json::from_str(posts[3].body()).expect("stopped request");
+        assert_eq!(active_body["params"][0][0], "gid");
+        assert_eq!(active_body["params"][0][6], "files");
+        assert_eq!(waiting_body["params"][0], 0);
+        assert_eq!(waiting_body["params"][1], 1000);
+        assert_eq!(waiting_body["params"][2][0], "gid");
+        assert_eq!(waiting_body["params"][2][6], "files");
+        assert_eq!(stopped_body["params"][0], 0);
+        assert_eq!(stopped_body["params"][1], 1000);
+        assert_eq!(stopped_body["params"][2][0], "gid");
+        assert_eq!(stopped_body["params"][2][6], "files");
     }
 
     #[test]

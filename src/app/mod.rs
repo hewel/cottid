@@ -722,12 +722,13 @@ mod tests {
     }
 
     #[test]
-    fn stale_download_snapshot_results_are_ignored() {
+    fn refresh_requests_are_ignored_while_refreshing() {
         let mut state = State::initial();
         connect(&mut state);
 
         let (first_generation, _) = state.begin_downloads_refresh().expect("first refresh");
-        let _second_generation = state.begin_downloads_refresh().expect("second refresh");
+        assert_eq!(state.begin_downloads_refresh(), None);
+
         let _task = super::update(
             &mut state,
             Message::Downloads(DownloadsMessage::RefreshFinished {
@@ -739,9 +740,12 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.global_stats(), None);
-        assert_eq!(state.download_speed_text(), "0 B/s");
-        assert_eq!(state.download_items().len(), 0);
+        assert_eq!(
+            state.global_stats(),
+            Some(GlobalStats::new(1_536, 512, 2, 3, 4))
+        );
+        assert_eq!(state.download_speed_text(), "1.5 KiB/s");
+        assert_eq!(state.download_items().len(), 1);
     }
 
     #[test]
@@ -840,6 +844,13 @@ mod tests {
                 generation: 1,
                 settings: Settings::default(),
                 result: Ok(ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new()))),
+            }),
+        );
+        let _task = super::update(
+            state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation: 1,
+                result: Ok(snapshot_with_items(Vec::new())),
             }),
         );
     }
