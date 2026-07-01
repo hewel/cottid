@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::app::{ActionMessage, ActionTarget};
-use crate::aria2::client::ConnectionTest;
+use crate::app::scheduler::{RefreshDirtyFlags, RefreshScheduler, RefreshTrigger};
+use crate::app::{ActionMessage, ActionTarget, RefreshInvalidation};
+use crate::aria2::client::{BatchRefreshRequest, ConnectionTest};
 use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats};
 use crate::aria2::errors::ClientError;
 use crate::config::{
@@ -210,6 +212,7 @@ pub struct State {
     settings: SettingsState,
     stats: StatsState,
     downloads: DownloadsState,
+    scheduler: RefreshScheduler,
     actions: ActionsState,
     selection: SelectionState,
 }
@@ -270,11 +273,16 @@ impl State {
             stats: StatsState { global: None },
             downloads: DownloadsState {
                 generation: 0,
-                items: Vec::new(),
+                items_by_gid: HashMap::new(),
+                active_order: Vec::new(),
+                waiting_order: Vec::new(),
+                stopped_order: Vec::new(),
+                merge_tick: 0,
                 filter: selected_filter,
                 refresh_state: RefreshState::NeverRefreshed,
                 feedback: None,
             },
+            scheduler: RefreshScheduler::default(),
             actions: ActionsState {
                 generation: 0,
                 pending: None,
@@ -410,16 +418,15 @@ impl State {
 
     pub fn filter_count(&self, filter: DownloadFilter) -> usize {
         self.downloads
-            .items
-            .iter()
-            .filter(|item| filter.matches(item))
+            .items_by_gid
+            .values()
+            .filter(|record| filter.matches(&record.item))
             .count()
     }
 
     pub fn download_rows(&self) -> Vec<DownloadRowView> {
         self.downloads
-            .items
-            .iter()
+            .ordered_items()
             .filter(|item| self.downloads.filter.matches(item))
             .map(|item| {
                 download_row_view(item, &self.actions, self.selection.selected_gid.as_ref())
@@ -430,14 +437,13 @@ impl State {
     pub fn selected_download_detail(&self) -> Option<DownloadDetailView> {
         let selected_gid = self.selection.selected_gid.as_ref()?;
         self.downloads
-            .items
-            .iter()
-            .find(|item| item.gid() == selected_gid)
-            .map(download_detail_view)
+            .items_by_gid
+            .get(selected_gid)
+            .map(|record| download_detail_view(&record.item))
     }
 
     pub fn detail_empty_text(&self) -> &'static str {
-        if self.downloads.items.is_empty() {
+        if self.downloads.is_empty() {
             "No download selected."
         } else {
             "Select a download to inspect details."
@@ -447,9 +453,9 @@ impl State {
     pub fn can_purge_stopped(&self) -> bool {
         self.is_connected()
             && self.actions.pending.is_none()
-            && self.downloads.items.iter().any(|item| {
+            && self.downloads.items_by_gid.values().any(|record| {
                 matches!(
-                    item.status(),
+                    record.item.status(),
                     DownloadStatus::Complete | DownloadStatus::Error
                 )
             })
@@ -457,12 +463,12 @@ impl State {
 
     pub fn downloads_empty_text(&self) -> Option<String> {
         if matches!(self.downloads.refresh_state, RefreshState::Refreshing)
-            && self.downloads.items.is_empty()
+            && self.downloads.is_empty()
         {
             return Some("Loading downloads...".to_owned());
         }
 
-        if self.downloads.items.is_empty() {
+        if self.downloads.is_empty() {
             return Some("No downloads found.".to_owned());
         }
 
@@ -490,8 +496,8 @@ impl State {
     }
 
     #[cfg(test)]
-    pub fn download_items(&self) -> &[DownloadItem] {
-        &self.downloads.items
+    pub fn download_items(&self) -> Vec<&DownloadItem> {
+        self.downloads.ordered_items().collect()
     }
 
     pub fn status_text(&self) -> String {
@@ -570,18 +576,43 @@ impl State {
         }
     }
 
-    pub(super) fn begin_downloads_refresh(&mut self) -> Option<(u64, Settings)> {
+    pub(super) fn begin_downloads_refresh(
+        &mut self,
+    ) -> Option<(u64, Settings, BatchRefreshRequest)> {
+        self.begin_downloads_refresh_with_trigger(RefreshTrigger::Manual)
+    }
+
+    pub(super) fn begin_scheduled_downloads_refresh(
+        &mut self,
+    ) -> Option<(u64, Settings, BatchRefreshRequest)> {
+        self.begin_downloads_refresh_with_trigger(RefreshTrigger::Scheduled)
+    }
+
+    pub(super) fn begin_dirty_downloads_refresh(
+        &mut self,
+    ) -> Option<(u64, Settings, BatchRefreshRequest)> {
+        self.begin_downloads_refresh_with_trigger(RefreshTrigger::Dirty)
+    }
+
+    fn begin_downloads_refresh_with_trigger(
+        &mut self,
+        trigger: RefreshTrigger,
+    ) -> Option<(u64, Settings, BatchRefreshRequest)> {
         let settings = self.connection.settings.clone()?;
+        let selected_gid = self.selection.selected_gid.as_ref();
+        let has_active_downloads = !self.downloads.active_order.is_empty();
+        let (generation, request) = self.scheduler.begin_refresh(
+            trigger,
+            has_active_downloads,
+            self.settings.open,
+            selected_gid,
+        )?;
 
-        if matches!(self.downloads.refresh_state, RefreshState::Refreshing) {
-            return None;
-        }
-
-        self.downloads.generation += 1;
+        self.downloads.generation = generation;
         self.downloads.refresh_state = RefreshState::Refreshing;
         self.downloads.feedback = None;
 
-        Some((self.downloads.generation, settings))
+        Some((generation, settings, request))
     }
 
     pub(super) fn finish_downloads_refresh(
@@ -589,21 +620,21 @@ impl State {
         generation: u64,
         result: Result<DownloadSnapshot, ClientError>,
     ) {
-        if generation != self.downloads.generation {
-            return;
-        }
-
         match result {
             Ok(snapshot) => {
-                let (global_stats, items) = snapshot.into_parts();
-                self.stats.global = Some(global_stats);
-                self.downloads.items = items;
+                let Some(request) = self.scheduler.complete_success(generation) else {
+                    return;
+                };
+                self.merge_download_snapshot(request, snapshot);
                 self.clear_missing_selection();
                 self.downloads.refresh_state = RefreshState::Fresh;
                 self.downloads.feedback = None;
             }
             Err(error) => {
-                self.downloads.refresh_state = if self.downloads.items.is_empty() {
+                if !self.scheduler.complete_failure(generation) {
+                    return;
+                }
+                self.downloads.refresh_state = if self.downloads.is_empty() {
                     RefreshState::NeverRefreshed
                 } else {
                     RefreshState::Stale
@@ -613,13 +644,42 @@ impl State {
         }
     }
 
+    pub(super) fn invalidate_refresh(&mut self, invalidation: RefreshInvalidation) {
+        let dirty = match invalidation {
+            RefreshInvalidation::Active => RefreshDirtyFlags {
+                active: true,
+                ..RefreshDirtyFlags::default()
+            },
+            RefreshInvalidation::Waiting => RefreshDirtyFlags {
+                waiting: true,
+                ..RefreshDirtyFlags::default()
+            },
+            RefreshInvalidation::Stopped => RefreshDirtyFlags {
+                stopped: true,
+                ..RefreshDirtyFlags::default()
+            },
+            RefreshInvalidation::Selected => RefreshDirtyFlags {
+                selected: true,
+                ..RefreshDirtyFlags::default()
+            },
+            RefreshInvalidation::All => RefreshDirtyFlags {
+                active: true,
+                waiting: true,
+                stopped: true,
+                selected: true,
+            },
+        };
+
+        self.scheduler.mark_dirty(dirty);
+    }
+
     pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {
         self.downloads.filter = filter;
         self.persist_config(None, None);
     }
 
     pub(super) fn select_download(&mut self, gid: Gid) {
-        if self.downloads.items.iter().any(|item| item.gid() == &gid) {
+        if self.downloads.items_by_gid.contains_key(&gid) {
             self.selection.selected_gid = Some(gid);
         }
     }
@@ -987,9 +1047,55 @@ impl State {
         true
     }
 
+    fn merge_download_snapshot(
+        &mut self,
+        request: BatchRefreshRequest,
+        snapshot: DownloadSnapshot,
+    ) {
+        let (global_stats, items) = snapshot.into_parts();
+        self.stats.global = Some(global_stats);
+        self.downloads.merge_tick += 1;
+        let merge_tick = self.downloads.merge_tick;
+
+        let mut active_order = Vec::new();
+        let mut waiting_order = Vec::new();
+        let mut stopped_order = Vec::new();
+
+        for item in items {
+            let gid = item.gid().clone();
+            match DownloadSection::from_status(item.status()) {
+                DownloadSection::Active => active_order.push(gid.clone()),
+                DownloadSection::Waiting => waiting_order.push(gid.clone()),
+                DownloadSection::Stopped => stopped_order.push(gid.clone()),
+            }
+
+            if let Some(record) = self.downloads.items_by_gid.get_mut(&gid) {
+                record.merge(item, merge_tick);
+            } else {
+                self.downloads
+                    .items_by_gid
+                    .insert(gid, DownloadRecord::new(item, merge_tick));
+            }
+        }
+
+        if request.include_active() {
+            self.downloads.active_order = active_order;
+        }
+        if request.include_waiting() {
+            self.downloads.waiting_order = waiting_order;
+        }
+        if request.include_stopped() {
+            self.downloads.stopped_order = stopped_order;
+        }
+        self.downloads.retain_ordered_records();
+    }
+
     fn clear_snapshot(&mut self) {
         self.stats.global = None;
-        self.downloads.items.clear();
+        self.downloads.items_by_gid.clear();
+        self.downloads.active_order.clear();
+        self.downloads.waiting_order.clear();
+        self.downloads.stopped_order.clear();
         self.downloads.refresh_state = RefreshState::NeverRefreshed;
         self.downloads.feedback = None;
         self.actions.pending = None;
@@ -1002,43 +1108,36 @@ impl State {
             && self.actions.pending.is_none()
             && self
                 .downloads
-                .items
-                .iter()
-                .any(|item| item.gid() == gid && matches!(item.status(), DownloadStatus::Active))
+                .items_by_gid
+                .get(gid)
+                .is_some_and(|record| matches!(record.item.status(), DownloadStatus::Active))
     }
 
     fn can_unpause(&self, gid: &Gid) -> bool {
         self.is_connected()
             && self.actions.pending.is_none()
-            && self.downloads.items.iter().any(|item| {
-                item.gid() == gid
-                    && matches!(
-                        item.status(),
-                        DownloadStatus::Paused | DownloadStatus::Waiting
-                    )
+            && self.downloads.items_by_gid.get(gid).is_some_and(|record| {
+                matches!(
+                    record.item.status(),
+                    DownloadStatus::Paused | DownloadStatus::Waiting
+                )
             })
     }
 
     fn can_remove(&self, gid: &Gid) -> bool {
         self.is_connected()
             && self.actions.pending.is_none()
-            && self.downloads.items.iter().any(|item| {
-                item.gid() == gid
-                    && !matches!(
-                        item.status(),
-                        DownloadStatus::Complete | DownloadStatus::Removed
-                    )
+            && self.downloads.items_by_gid.get(gid).is_some_and(|record| {
+                !matches!(
+                    record.item.status(),
+                    DownloadStatus::Complete | DownloadStatus::Removed
+                )
             })
     }
 
     fn set_item_error(&mut self, gid: &Gid, message: String) {
-        if let Some(item) = self
-            .downloads
-            .items
-            .iter_mut()
-            .find(|item| item.gid() == gid)
-        {
-            item.set_command_error(Some(message));
+        if let Some(record) = self.downloads.items_by_gid.get_mut(gid) {
+            record.item.set_command_error(Some(message));
         } else {
             self.actions.feedback = Some(message);
         }
@@ -1049,12 +1148,7 @@ impl State {
             return;
         };
 
-        if !self
-            .downloads
-            .items
-            .iter()
-            .any(|item| item.gid() == selected_gid)
-        {
+        if !self.downloads.items_by_gid.contains_key(selected_gid) {
             self.selection.selected_gid = None;
         }
     }
@@ -1106,10 +1200,75 @@ struct StatsState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DownloadsState {
     generation: u64,
-    items: Vec<DownloadItem>,
+    items_by_gid: HashMap<Gid, DownloadRecord>,
+    active_order: Vec<Gid>,
+    waiting_order: Vec<Gid>,
+    stopped_order: Vec<Gid>,
+    merge_tick: u64,
     filter: DownloadFilter,
     refresh_state: RefreshState,
     feedback: Option<String>,
+}
+
+impl DownloadsState {
+    fn is_empty(&self) -> bool {
+        self.active_order.is_empty()
+            && self.waiting_order.is_empty()
+            && self.stopped_order.is_empty()
+    }
+
+    fn ordered_items(&self) -> impl Iterator<Item = &DownloadItem> {
+        self.active_order
+            .iter()
+            .chain(self.waiting_order.iter())
+            .chain(self.stopped_order.iter())
+            .filter_map(|gid| self.items_by_gid.get(gid))
+            .map(|record| &record.item)
+    }
+
+    fn retain_ordered_records(&mut self) {
+        self.items_by_gid.retain(|gid, _| {
+            self.active_order.contains(gid)
+                || self.waiting_order.contains(gid)
+                || self.stopped_order.contains(gid)
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DownloadRecord {
+    item: DownloadItem,
+    revision: u64,
+    last_seen_at: u64,
+    last_changed_at: u64,
+    last_rpc_update_at: u64,
+}
+
+impl DownloadRecord {
+    fn new(item: DownloadItem, merge_tick: u64) -> Self {
+        Self {
+            item,
+            revision: 1,
+            last_seen_at: merge_tick,
+            last_changed_at: merge_tick,
+            last_rpc_update_at: merge_tick,
+        }
+    }
+
+    fn merge(&mut self, mut item: DownloadItem, merge_tick: u64) {
+        if let Some(error) = self.item.command_error().map(str::to_owned) {
+            item.set_command_error(Some(error));
+        }
+
+        if self.item != item {
+            self.item = item;
+            self.revision += 1;
+            self.last_changed_at = merge_tick;
+        }
+
+        self.last_seen_at = merge_tick;
+        self.last_rpc_update_at = merge_tick;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1122,6 +1281,26 @@ struct ActionsState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SelectionState {
     selected_gid: Option<Gid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadSection {
+    Active,
+    Waiting,
+    Stopped,
+}
+
+impl DownloadSection {
+    fn from_status(status: &DownloadStatus) -> Self {
+        match status {
+            DownloadStatus::Active => Self::Active,
+            DownloadStatus::Waiting | DownloadStatus::Paused => Self::Waiting,
+            DownloadStatus::Complete
+            | DownloadStatus::Error
+            | DownloadStatus::Removed
+            | DownloadStatus::Unknown(_) => Self::Stopped,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

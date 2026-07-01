@@ -14,6 +14,8 @@ use crate::aria2::raw_types::{
 };
 use crate::config::{RpcAuth, Settings};
 
+pub const DEFAULT_STOPPED_REFRESH_LIMIT: u64 = 50;
+
 const CONNECTION_TEST_REQUEST_ID: RequestId = RequestId::new(1);
 const GLOBAL_STATS_REQUEST_ID: RequestId = RequestId::new(2);
 const TELL_ACTIVE_REQUEST_ID: RequestId = RequestId::new(3);
@@ -81,6 +83,88 @@ impl HttpResponse {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchRefreshRequest {
+    include_active: bool,
+    include_waiting: bool,
+    include_stopped: bool,
+    stopped_limit: u64,
+    selected_gid: Option<Gid>,
+}
+
+impl Default for BatchRefreshRequest {
+    fn default() -> Self {
+        Self {
+            include_active: true,
+            include_waiting: true,
+            include_stopped: true,
+            stopped_limit: DEFAULT_STOPPED_REFRESH_LIMIT,
+            selected_gid: None,
+        }
+    }
+}
+
+impl BatchRefreshRequest {
+    pub fn stats_only() -> Self {
+        Self {
+            include_active: false,
+            include_waiting: false,
+            include_stopped: false,
+            stopped_limit: DEFAULT_STOPPED_REFRESH_LIMIT,
+            selected_gid: None,
+        }
+    }
+
+    pub fn include_all_summaries(&mut self) {
+        self.include_active = true;
+        self.include_waiting = true;
+        self.include_stopped = true;
+    }
+
+    pub fn include_active(&self) -> bool {
+        self.include_active
+    }
+
+    pub fn set_include_active(&mut self, include_active: bool) {
+        self.include_active = include_active;
+    }
+
+    pub fn include_waiting(&self) -> bool {
+        self.include_waiting
+    }
+
+    pub fn set_include_waiting(&mut self, include_waiting: bool) {
+        self.include_waiting = include_waiting;
+    }
+
+    pub fn include_stopped(&self) -> bool {
+        self.include_stopped
+    }
+
+    pub fn set_include_stopped(&mut self, include_stopped: bool) {
+        self.include_stopped = include_stopped;
+    }
+
+    pub fn stopped_limit(&self) -> u64 {
+        self.stopped_limit
+    }
+
+    pub fn selected_gid(&self) -> Option<&Gid> {
+        self.selected_gid.as_ref()
+    }
+
+    pub fn set_selected_gid(&mut self, selected_gid: Option<Gid>) {
+        self.selected_gid = selected_gid;
+    }
+
+    pub fn refreshes_anything(&self) -> bool {
+        self.include_active
+            || self.include_waiting
+            || self.include_stopped
+            || self.selected_gid.is_some()
+    }
+}
+
 #[cfg(test)]
 pub trait Transport {
     fn post(&self, request: HttpPost) -> Result<HttpResponse, ClientError>;
@@ -95,32 +179,52 @@ pub async fn test_connection(settings: Settings) -> Result<ConnectionTest, Clien
     Ok(ConnectionTest { version })
 }
 
+#[expect(dead_code, reason = "kept as the default app-facing snapshot wrapper")]
 pub async fn fetch_download_snapshot(settings: Settings) -> Result<DownloadSnapshot, ClientError> {
+    fetch_download_snapshot_with_request(settings, BatchRefreshRequest::default()).await
+}
+
+pub async fn fetch_download_snapshot_with_request(
+    settings: Settings,
+    request: BatchRefreshRequest,
+) -> Result<DownloadSnapshot, ClientError> {
     let transport = ReqwestTransport::new();
     let global_stats = fetch_global_stats_async(&settings, &transport).await?;
     let secret = secret(&settings);
 
-    let active = fetch_download_items_async(
-        &settings,
-        &transport,
-        build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
-        TELL_ACTIVE_REQUEST_ID,
-    )
-    .await?;
-    let waiting = fetch_download_items_async(
-        &settings,
-        &transport,
-        build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
-        TELL_WAITING_REQUEST_ID,
-    )
-    .await?;
-    let stopped = fetch_download_items_async(
-        &settings,
-        &transport,
-        build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret),
-        TELL_STOPPED_REQUEST_ID,
-    )
-    .await?;
+    let active = if request.include_active {
+        fetch_download_items_async(
+            &settings,
+            &transport,
+            build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
+            TELL_ACTIVE_REQUEST_ID,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    let waiting = if request.include_waiting {
+        fetch_download_items_async(
+            &settings,
+            &transport,
+            build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
+            TELL_WAITING_REQUEST_ID,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    let stopped = if request.include_stopped {
+        fetch_download_items_async(
+            &settings,
+            &transport,
+            build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret, request.stopped_limit()),
+            TELL_STOPPED_REQUEST_ID,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
 
     let mut items = active;
     items.extend(waiting);
@@ -197,27 +301,52 @@ pub fn fetch_download_snapshot_with_transport(
     settings: &Settings,
     transport: &impl Transport,
 ) -> Result<DownloadSnapshot, ClientError> {
+    fetch_download_snapshot_with_transport_and_request(
+        settings,
+        transport,
+        &BatchRefreshRequest::default(),
+    )
+}
+
+#[cfg(test)]
+pub fn fetch_download_snapshot_with_transport_and_request(
+    settings: &Settings,
+    transport: &impl Transport,
+    request: &BatchRefreshRequest,
+) -> Result<DownloadSnapshot, ClientError> {
     let global_stats = fetch_global_stats_with_transport(settings, transport)?;
     let secret = secret(settings);
 
-    let active = fetch_download_items(
-        settings,
-        transport,
-        build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
-        TELL_ACTIVE_REQUEST_ID,
-    )?;
-    let waiting = fetch_download_items(
-        settings,
-        transport,
-        build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
-        TELL_WAITING_REQUEST_ID,
-    )?;
-    let stopped = fetch_download_items(
-        settings,
-        transport,
-        build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret),
-        TELL_STOPPED_REQUEST_ID,
-    )?;
+    let active = if request.include_active {
+        fetch_download_items(
+            settings,
+            transport,
+            build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
+            TELL_ACTIVE_REQUEST_ID,
+        )?
+    } else {
+        Vec::new()
+    };
+    let waiting = if request.include_waiting {
+        fetch_download_items(
+            settings,
+            transport,
+            build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
+            TELL_WAITING_REQUEST_ID,
+        )?
+    } else {
+        Vec::new()
+    };
+    let stopped = if request.include_stopped {
+        fetch_download_items(
+            settings,
+            transport,
+            build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret, request.stopped_limit()),
+            TELL_STOPPED_REQUEST_ID,
+        )?
+    } else {
+        Vec::new()
+    };
 
     let mut items = active;
     items.extend(waiting);
@@ -404,7 +533,7 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        HttpPost, HttpResponse, Transport, add_uri_with_transport,
+        DEFAULT_STOPPED_REFRESH_LIMIT, HttpPost, HttpResponse, Transport, add_uri_with_transport,
         fetch_download_snapshot_with_transport, fetch_global_stats_with_transport,
         pause_with_transport, purge_stopped_with_transport, remove_with_transport,
         test_connection_with_transport, unpause_with_transport,
@@ -580,7 +709,7 @@ mod tests {
         assert_eq!(waiting_body["params"][2][0], "gid");
         assert_eq!(waiting_body["params"][2][6], "files");
         assert_eq!(stopped_body["params"][0], 0);
-        assert_eq!(stopped_body["params"][1], 1000);
+        assert_eq!(stopped_body["params"][1], DEFAULT_STOPPED_REFRESH_LIMIT);
         assert_eq!(stopped_body["params"][2][0], "gid");
         assert_eq!(stopped_body["params"][2][6], "files");
     }

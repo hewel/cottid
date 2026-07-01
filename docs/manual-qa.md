@@ -9,6 +9,12 @@ Run against an existing aria2 RPC server.
 - Actions: pause, unpause, remove one row, and confirm pending state plus refresh.
 - Purge: complete or stop a download, purge stopped results, and confirm refresh.
 - Recovery: stop the daemon after a successful refresh and confirm stale snapshot remains.
+- Slow refresh: make aria2 slow or unreachable and confirm repeated refresh
+  ticks do not pile up while one refresh is still running.
+- Many stopped downloads: confirm the UI remains responsive and shows only the
+  latest bounded stopped/history page during normal refresh.
+- Active to stopped: let a selected active download complete and confirm the row
+  moves sections without losing unrelated UI state.
 - Secret storage: use a token, save/test connection, restart Cottid, and confirm
   the token is restored without appearing in the config file when keyring
   storage is available.

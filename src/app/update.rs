@@ -74,13 +74,20 @@ fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
             result,
         } => {
             if state.finish_action(generation, target, result) {
-                let Some((refresh_generation, refresh_settings)) = state.begin_downloads_refresh()
+                let Some((refresh_generation, refresh_settings, refresh_request)) =
+                    state.begin_dirty_downloads_refresh()
                 else {
                     return Task::none();
                 };
 
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings).await },
+                    async move {
+                        crate::aria2::client::fetch_download_snapshot_with_request(
+                            refresh_settings,
+                            refresh_request,
+                        )
+                        .await
+                    },
                     move |result| {
                         Message::Downloads(DownloadsMessage::RefreshFinished {
                             generation: refresh_generation,
@@ -121,13 +128,20 @@ fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
         }
         AddMessage::SubmitFinished { generation, result } => {
             if state.finish_add_uri(generation, result) {
-                let Some((refresh_generation, refresh_settings)) = state.begin_downloads_refresh()
+                let Some((refresh_generation, refresh_settings, refresh_request)) =
+                    state.begin_dirty_downloads_refresh()
                 else {
                     return Task::none();
                 };
 
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings).await },
+                    async move {
+                        crate::aria2::client::fetch_download_snapshot_with_request(
+                            refresh_settings,
+                            refresh_request,
+                        )
+                        .await
+                    },
                     move |result| {
                         Message::Downloads(DownloadsMessage::RefreshFinished {
                             generation: refresh_generation,
@@ -168,13 +182,20 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
             result,
         } => {
             if state.finish_connection_test(generation, settings, result) {
-                let Some((refresh_generation, refresh_settings)) = state.begin_downloads_refresh()
+                let Some((refresh_generation, refresh_settings, refresh_request)) =
+                    state.begin_downloads_refresh()
                 else {
                     return Task::none();
                 };
 
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings).await },
+                    async move {
+                        crate::aria2::client::fetch_download_snapshot_with_request(
+                            refresh_settings,
+                            refresh_request,
+                        )
+                        .await
+                    },
                     move |result| {
                         Message::Downloads(DownloadsMessage::RefreshFinished {
                             generation: refresh_generation,
@@ -191,17 +212,40 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
 
 fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Message> {
     match message {
-        DownloadsMessage::RefreshRequested => {
-            let Some((generation, settings)) = state.begin_downloads_refresh() else {
+        DownloadsMessage::RefreshTick => {
+            let Some((generation, settings, request)) = state.begin_scheduled_downloads_refresh()
+            else {
                 return Task::none();
             };
 
             Task::perform(
-                async move { crate::aria2::client::fetch_download_snapshot(settings).await },
+                async move {
+                    crate::aria2::client::fetch_download_snapshot_with_request(settings, request)
+                        .await
+                },
                 move |result| {
                     Message::Downloads(DownloadsMessage::RefreshFinished { generation, result })
                 },
             )
+        }
+        DownloadsMessage::RefreshRequested => {
+            let Some((generation, settings, request)) = state.begin_downloads_refresh() else {
+                return Task::none();
+            };
+
+            Task::perform(
+                async move {
+                    crate::aria2::client::fetch_download_snapshot_with_request(settings, request)
+                        .await
+                },
+                move |result| {
+                    Message::Downloads(DownloadsMessage::RefreshFinished { generation, result })
+                },
+            )
+        }
+        DownloadsMessage::Invalidated(invalidation) => {
+            state.invalidate_refresh(invalidation);
+            Task::none()
         }
         DownloadsMessage::FilterChanged(filter) => {
             state.set_download_filter(filter);

@@ -66,12 +66,25 @@ pub enum ConnectionMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DownloadsMessage {
+    RefreshTick,
     RefreshRequested,
+    #[expect(dead_code, reason = "reserved for future WebSocket invalidation")]
+    Invalidated(RefreshInvalidation),
     FilterChanged(DownloadFilter),
     RefreshFinished {
         generation: u64,
         result: Result<DownloadSnapshot, ClientError>,
     },
+}
+
+#[expect(dead_code, reason = "reserved for future WebSocket invalidation")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshInvalidation {
+    Active,
+    Waiting,
+    Stopped,
+    Selected,
+    All,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

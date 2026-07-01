@@ -257,7 +257,7 @@ Purpose:
 
 ## Refresh And Batch Strategy
 
-The app-facing refresh operation should be `fetch_snapshot`.
+The app-facing refresh operation should be a batch-style snapshot request.
 
 It returns:
 
@@ -266,11 +266,16 @@ It returns:
 - Waiting downloads.
 - Stopped downloads.
 - Enough metadata to preserve ordering and selection by `Gid`.
+- A bounded stopped/history page, not unbounded daemon history.
 
 Preferred MVP strategy:
 
-- Use one JSON-RPC batch HTTP POST for `getGlobalStat`, `tellActive`,
-  `tellWaiting`, and `tellStopped`.
+- Use a `BatchRefreshRequest` to decide whether to fetch active, waiting,
+  stopped, and selected-detail data for the current scheduler tick.
+- Request only fields needed by the current UI.
+- Cap stopped refreshes to the latest page during normal polling.
+- Preserve the request shape behind the client facade so JSON-RPC batch HTTP
+  POST or `system.multicall` can be added later without changing UI code.
 - Correlate each response by request id.
 - Allow partial failure to become a typed refresh error unless the app later
   explicitly chooses partial snapshot behavior.

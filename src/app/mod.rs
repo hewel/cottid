@@ -1,4 +1,5 @@
 mod message;
+mod scheduler;
 mod state;
 mod subscriptions;
 mod update;
@@ -7,7 +8,7 @@ use iced::{Element, Task};
 
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
-    SelectionMessage, SettingsMessage, ToolbarMessage,
+    RefreshInvalidation, SelectionMessage, SettingsMessage, ToolbarMessage,
 };
 pub use state::{
     ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, RefreshState, State,
@@ -46,8 +47,8 @@ mod tests {
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadsMessage, Message, RefreshState, SelectionMessage, SettingsMessage,
-        State, ToolbarMessage,
+        DownloadFilter, DownloadsMessage, Message, RefreshInvalidation, RefreshState,
+        SelectionMessage, SettingsMessage, State, ToolbarMessage,
     };
 
     #[test]
@@ -726,7 +727,7 @@ mod tests {
         let mut state = State::initial();
         connect(&mut state);
 
-        let (first_generation, _) = state.begin_downloads_refresh().expect("first refresh");
+        let (first_generation, _, _) = state.begin_downloads_refresh().expect("first refresh");
         assert_eq!(state.begin_downloads_refresh(), None);
 
         let _task = super::update(
@@ -753,7 +754,7 @@ mod tests {
         let mut state = State::initial();
         connect(&mut state);
 
-        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
+        let (generation, _, _) = state.begin_downloads_refresh().expect("refresh");
         let _task = super::update(
             &mut state,
             Message::Downloads(DownloadsMessage::RefreshFinished {
@@ -765,7 +766,7 @@ mod tests {
             }),
         );
 
-        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
+        let (generation, _, _) = state.begin_downloads_refresh().expect("refresh");
         let _task = super::update(
             &mut state,
             Message::Downloads(DownloadsMessage::RefreshFinished {
@@ -794,7 +795,7 @@ mod tests {
         let mut state = State::initial();
         connect(&mut state);
 
-        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
+        let (generation, _, _) = state.begin_downloads_refresh().expect("refresh");
         let _task = super::update(
             &mut state,
             Message::Downloads(DownloadsMessage::RefreshFinished {
@@ -816,6 +817,47 @@ mod tests {
         assert_eq!(state.download_rows()[0].gid(), "error-gid");
         assert_eq!(state.filter_count(DownloadFilter::All), 3);
         assert_eq!(state.filter_count(DownloadFilter::Active), 1);
+    }
+
+    #[test]
+    fn partial_active_refresh_preserves_stopped_history_rows() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("active-gid", DownloadStatus::Active),
+                download_item("done-gid", DownloadStatus::Complete),
+            ],
+        );
+
+        state.invalidate_refresh(RefreshInvalidation::Active);
+        let (generation, _, request) = state
+            .begin_scheduled_downloads_refresh()
+            .expect("dirty active refresh");
+        assert!(request.include_active());
+        assert!(!request.include_stopped());
+
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation,
+                result: Ok(snapshot_with_items(vec![download_item(
+                    "active-gid",
+                    DownloadStatus::Active,
+                )])),
+            }),
+        );
+
+        assert_eq!(state.filter_count(DownloadFilter::Complete), 1);
+    }
+
+    #[test]
+    fn scheduled_refresh_waits_when_idle_downloads_are_current() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        assert_eq!(state.begin_scheduled_downloads_refresh(), None);
     }
 
     #[test]
@@ -860,7 +902,7 @@ mod tests {
     }
 
     fn apply_snapshot(state: &mut State, items: Vec<DownloadItem>) {
-        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
+        let (generation, _, _) = state.begin_downloads_refresh().expect("refresh");
         let _task = super::update(
             state,
             Message::Downloads(DownloadsMessage::RefreshFinished {

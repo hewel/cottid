@@ -119,10 +119,14 @@ pub fn build_tell_waiting_request(id: RequestId, secret: Option<&Secret>) -> Jso
     }
 }
 
-pub fn build_tell_stopped_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+pub fn build_tell_stopped_request(
+    id: RequestId,
+    secret: Option<&Secret>,
+    count: u64,
+) -> JsonRpcRequest {
     let mut params = token_params(secret);
     params.push(JsonRpcParam::Number(0));
-    params.push(JsonRpcParam::Number(1000));
+    params.push(JsonRpcParam::Number(count));
     params.push(download_item_keys_param());
 
     JsonRpcRequest {
@@ -279,7 +283,7 @@ mod tests {
     #[test]
     fn builds_tell_stopped_request_with_secret_offset_and_count() {
         let secret = Secret::session("secret-value");
-        let request = build_tell_stopped_request(RequestId::new(23), Some(&secret));
+        let request = build_tell_stopped_request(RequestId::new(23), Some(&secret), 50);
 
         assert_eq!(request.method(), "aria2.tellStopped");
         assert_eq!(
@@ -287,7 +291,7 @@ mod tests {
             &[
                 JsonRpcParam::String("token:secret-value".to_owned()),
                 JsonRpcParam::Number(0),
-                JsonRpcParam::Number(1000),
+                JsonRpcParam::Number(50),
                 download_item_keys_param()
             ]
         );
@@ -296,7 +300,7 @@ mod tests {
         let body = serde_json::to_value(&request).expect("request serializes");
         assert_eq!(body["params"][0], "token:secret-value");
         assert_eq!(body["params"][1], 0);
-        assert_eq!(body["params"][2], 1000);
+        assert_eq!(body["params"][2], 50);
         assert_eq!(body["params"][3][0], "gid");
         assert_eq!(body["params"][3][6], "files");
     }

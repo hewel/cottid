@@ -10,5 +10,10 @@ handlers, pure views, async tasks, and subscriptions.
 - Views read state and emit messages only. No RPC calls, config writes,
   blocking IO, or hidden mutation in views.
 - Tasks wrap async RPC/config work and return typed result messages.
-- Subscriptions should start with polling and later allow WebSocket events
-  without changing UI components.
+- Subscriptions emit central scheduler ticks; individual views, rows, and detail
+  panels must not start their own polling.
+- The app state must reject refresh re-entry while a refresh task is in flight.
+  Stale generation results are ignored.
+- WebSocket events should enter the app as dirty invalidation messages. They
+  must not directly replace large UI state; the scheduler performs the next
+  typed refresh.

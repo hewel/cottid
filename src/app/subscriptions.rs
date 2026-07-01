@@ -16,7 +16,7 @@ pub fn subscription(state: &super::State) -> Subscription<Message> {
             iced::time::every(Duration::from_secs(
                 u64::from(state.polling_interval_seconds()).max(1),
             ))
-            .map(|_| Message::Downloads(DownloadsMessage::RefreshRequested)),
+            .map(|_| Message::Downloads(DownloadsMessage::RefreshTick)),
         ]);
     }
 
