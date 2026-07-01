@@ -1,3 +1,6 @@
-fn main() {
-    println!("Hello, world!");
+mod app;
+mod ui;
+
+fn main() -> iced::Result {
+    app::run()
 }
