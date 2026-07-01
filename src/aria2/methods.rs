@@ -19,7 +19,14 @@ pub struct JsonRpcRequest {
     jsonrpc: &'static str,
     id: RequestId,
     method: &'static str,
-    params: Vec<String>,
+    params: Vec<JsonRpcParam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum JsonRpcParam {
+    String(String),
+    StringList(Vec<String>),
 }
 
 impl JsonRpcRequest {
@@ -34,7 +41,7 @@ impl JsonRpcRequest {
     }
 
     #[cfg(test)]
-    pub fn params(&self) -> &[String] {
+    pub fn params(&self) -> &[JsonRpcParam] {
         &self.params
     }
 }
@@ -85,8 +92,8 @@ pub fn build_tell_active_request(id: RequestId, secret: Option<&Secret>) -> Json
 
 pub fn build_tell_waiting_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
     let mut params = token_params(secret);
-    params.push("0".to_owned());
-    params.push("1000".to_owned());
+    params.push(JsonRpcParam::String("0".to_owned()));
+    params.push(JsonRpcParam::String("1000".to_owned()));
 
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -98,8 +105,8 @@ pub fn build_tell_waiting_request(id: RequestId, secret: Option<&Secret>) -> Jso
 
 pub fn build_tell_stopped_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
     let mut params = token_params(secret);
-    params.push("0".to_owned());
-    params.push("1000".to_owned());
+    params.push(JsonRpcParam::String("0".to_owned()));
+    params.push(JsonRpcParam::String("1000".to_owned()));
 
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -109,18 +116,33 @@ pub fn build_tell_stopped_request(id: RequestId, secret: Option<&Secret>) -> Jso
     }
 }
 
-fn token_params(secret: Option<&Secret>) -> Vec<String> {
+pub fn build_add_uri_request(id: RequestId, secret: Option<&Secret>, uri: &str) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::StringList(vec![uri.to_owned()]));
+
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.addUri",
+        params,
+    }
+}
+
+fn token_params(secret: Option<&Secret>) -> Vec<JsonRpcParam> {
     secret
-        .map(|secret| format!("token:{}", secret.expose_for_session()))
+        .map(|secret| JsonRpcParam::String(format!("token:{}", secret.expose_for_session())))
         .into_iter()
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use crate::aria2::methods::{
-        RequestId, build_get_global_stat_request, build_get_version_request,
-        build_tell_active_request, build_tell_stopped_request, build_tell_waiting_request,
+        JsonRpcParam, RequestId, build_add_uri_request, build_get_global_stat_request,
+        build_get_version_request, build_tell_active_request, build_tell_stopped_request,
+        build_tell_waiting_request,
     };
     use crate::config::Secret;
 
@@ -138,7 +160,10 @@ mod tests {
         let secret = Secret::session("secret-value");
         let request = build_get_version_request(RequestId::new(8), Some(&secret));
 
-        assert_eq!(request.params(), &["token:secret-value"]);
+        assert_eq!(
+            request.params(),
+            &[JsonRpcParam::String("token:secret-value".to_owned())]
+        );
         assert!(!format!("{request:?}").contains("secret-value"));
     }
 
@@ -164,7 +189,13 @@ mod tests {
         let request = build_tell_waiting_request(RequestId::new(22), None);
 
         assert_eq!(request.method(), "aria2.tellWaiting");
-        assert_eq!(request.params(), &["0", "1000"]);
+        assert_eq!(
+            request.params(),
+            &[
+                JsonRpcParam::String("0".to_owned()),
+                JsonRpcParam::String("1000".to_owned())
+            ]
+        );
     }
 
     #[test]
@@ -173,7 +204,34 @@ mod tests {
         let request = build_tell_stopped_request(RequestId::new(23), Some(&secret));
 
         assert_eq!(request.method(), "aria2.tellStopped");
-        assert_eq!(request.params(), &["token:secret-value", "0", "1000"]);
+        assert_eq!(
+            request.params(),
+            &[
+                JsonRpcParam::String("token:secret-value".to_owned()),
+                JsonRpcParam::String("0".to_owned()),
+                JsonRpcParam::String("1000".to_owned())
+            ]
+        );
+        assert!(!format!("{request:?}").contains("secret-value"));
+    }
+
+    #[test]
+    fn builds_add_uri_request_with_uri_array() {
+        let request = build_add_uri_request(RequestId::new(31), None, "https://example.test/file");
+        let body: Value = serde_json::to_value(&request).expect("request serializes");
+
+        assert_eq!(request.method(), "aria2.addUri");
+        assert_eq!(body["params"][0][0], "https://example.test/file");
+    }
+
+    #[test]
+    fn builds_add_uri_request_with_secret_before_uri_array() {
+        let secret = Secret::session("secret-value");
+        let request = build_add_uri_request(RequestId::new(31), Some(&secret), "magnet:?xt=abc");
+        let body: Value = serde_json::to_value(&request).expect("request serializes");
+
+        assert_eq!(body["params"][0], "token:secret-value");
+        assert_eq!(body["params"][1][0], "magnet:?xt=abc");
         assert!(!format!("{request:?}").contains("secret-value"));
     }
 }

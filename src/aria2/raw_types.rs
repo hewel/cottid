@@ -113,6 +113,15 @@ pub fn parse_download_items_response(
     raw_items.into_iter().map(parse_download_item).collect()
 }
 
+pub fn parse_add_uri_response(body: &str, expected_id: RequestId) -> Result<Gid, ClientError> {
+    let envelope: JsonRpcEnvelope<String> = parse_envelope(body, expected_id)?;
+    let gid = envelope
+        .result
+        .ok_or_else(|| ClientError::MalformedResponse("missing addUri result".to_owned()))?;
+
+    Gid::new(gid).map_err(|error| ClientError::MalformedResponse(error.message().to_owned()))
+}
+
 fn parse_envelope<T>(body: &str, expected_id: RequestId) -> Result<JsonRpcEnvelope<T>, ClientError>
 where
     T: for<'de> Deserialize<'de>,
@@ -189,7 +198,8 @@ fn parse_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_download_items_response, parse_get_version_response, parse_global_stats_response,
+        parse_add_uri_response, parse_download_items_response, parse_get_version_response,
+        parse_global_stats_response,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::methods::RequestId;
@@ -319,6 +329,28 @@ mod tests {
             RequestId::new(21),
         )
         .expect_err("malformed item should fail");
+
+        assert!(matches!(error, ClientError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn parses_add_uri_result_into_typed_gid() {
+        let gid = parse_add_uri_response(
+            r#"{"jsonrpc":"2.0","id":31,"result":"new-gid"}"#,
+            RequestId::new(31),
+        )
+        .expect("valid addUri result");
+
+        assert_eq!(gid.as_str(), "new-gid");
+    }
+
+    #[test]
+    fn rejects_empty_add_uri_gid() {
+        let error = parse_add_uri_response(
+            r#"{"jsonrpc":"2.0","id":31,"result":""}"#,
+            RequestId::new(31),
+        )
+        .expect_err("empty gid should fail");
 
         assert!(matches!(error, ClientError::MalformedResponse(_)));
     }

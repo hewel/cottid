@@ -2,7 +2,8 @@ use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
-    ConnectionMessage, ConnectionStatus, Message, SettingsMessage, State, ToolbarMessage,
+    AddMessage, ConnectionMessage, ConnectionStatus, Message, SettingsMessage, State,
+    ToolbarMessage,
 };
 use crate::config::RpcAuthDraft;
 
@@ -15,6 +16,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         text(format!("Down {}", state.download_speed_text())),
         text(format!("Up {}", state.upload_speed_text())),
         text(state.refresh_state_text()),
+        button("Add").on_press(Message::Add(AddMessage::Open)),
         button("Settings").on_press(Message::Toolbar(ToolbarMessage::OpenSettings)),
     ]
     .align_y(Alignment::Center)
@@ -47,10 +49,61 @@ pub fn view(state: &State) -> Element<'_, Message> {
         shell = shell.push(settings_modal(state));
     }
 
+    if state.is_add_open() {
+        shell = shell.push(add_modal(state));
+    }
+
     container(shell)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn add_modal(state: &State) -> Element<'_, Message> {
+    let input = text_input(
+        "https://example.com/file.iso or magnet:?",
+        state.add_input(),
+    )
+    .on_input(|value| Message::Add(AddMessage::InputChanged(value)))
+    .padding(8);
+
+    let submit = if state.is_add_ready() {
+        button(if state.is_add_pending() {
+            "Adding"
+        } else {
+            "Add"
+        })
+        .on_press(Message::Add(AddMessage::Submit))
+    } else {
+        button(if state.is_add_pending() {
+            "Adding"
+        } else {
+            "Add"
+        })
+    };
+
+    container(
+        column![
+            text("Add Download").size(20),
+            text("URI or magnet"),
+            input,
+            text(
+                state
+                    .add_feedback()
+                    .unwrap_or("Enter one URI or magnet link.")
+            ),
+            row![
+                submit,
+                button("Cancel").on_press(Message::Add(AddMessage::Cancel)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(8),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .into()
 }
 
 fn settings_modal(state: &State) -> Element<'_, Message> {

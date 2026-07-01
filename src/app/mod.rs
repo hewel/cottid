@@ -5,7 +5,9 @@ mod update;
 
 use iced::{Element, Task};
 
-pub use message::{ConnectionMessage, DownloadsMessage, Message, SettingsMessage, ToolbarMessage};
+pub use message::{
+    AddMessage, ConnectionMessage, DownloadsMessage, Message, SettingsMessage, ToolbarMessage,
+};
 pub use state::{ConnectionStatus, DownloadFilter, DownloadRowView, RefreshState, State};
 
 pub fn run() -> iced::Result {
@@ -37,7 +39,7 @@ mod tests {
     use crate::config::{RpcAuthDraft, Settings};
 
     use super::{
-        ConnectionMessage, ConnectionStatus, DownloadFilter, DownloadsMessage, Message,
+        AddMessage, ConnectionMessage, ConnectionStatus, DownloadFilter, DownloadsMessage, Message,
         RefreshState, SettingsMessage, State, ToolbarMessage,
     };
 
@@ -57,6 +59,26 @@ mod tests {
 
         assert!(state.is_settings_open());
         assert_eq!(state.connection_status(), ConnectionStatus::Offline);
+    }
+
+    #[test]
+    fn add_dialog_opens_and_cancels_without_changing_downloads() {
+        let mut state = State::initial();
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        assert!(state.is_add_open());
+
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Add(AddMessage::Cancel));
+
+        assert!(!state.is_add_open());
+        assert_eq!(state.add_input(), "");
+        assert_eq!(state.download_items().len(), 0);
     }
 
     #[test]
@@ -226,6 +248,96 @@ mod tests {
             state.settings_feedback(),
             Some("Connection failed. Check the endpoint and secret.")
         );
+    }
+
+    #[test]
+    fn add_submit_validates_one_uri_or_magnet_before_rpc() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "ftp://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
+
+        assert_eq!(
+            state.add_feedback(),
+            Some("Enter an http, https, or magnet link.")
+        );
+        assert!(!state.is_add_pending());
+
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "magnet:?xt=urn:btih:abc".to_owned(),
+            )),
+        );
+
+        assert!(state.is_add_ready());
+    }
+
+    #[test]
+    fn add_submit_success_keeps_dialog_recoverable_and_triggers_refresh_state() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
+
+        assert!(state.is_add_pending());
+
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::SubmitFinished {
+                generation: 1,
+                result: Ok(Gid::new("new-gid").expect("valid gid")),
+            }),
+        );
+
+        assert!(!state.is_add_pending());
+        assert_eq!(state.add_input(), "");
+        assert_eq!(state.add_feedback(), Some("Download added."));
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+    }
+
+    #[test]
+    fn add_submit_error_is_visible_and_allows_retry() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::SubmitFinished {
+                generation: 1,
+                result: Err(ClientError::Rpc {
+                    code: 1,
+                    message: "bad uri".to_owned(),
+                }),
+            }),
+        );
+
+        assert!(!state.is_add_pending());
+        assert_eq!(state.add_input(), "https://example.test/file");
+        assert_eq!(state.add_feedback(), Some("aria2 returned an RPC error."));
+        assert!(state.is_add_ready());
     }
 
     #[test]

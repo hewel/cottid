@@ -1,13 +1,15 @@
 use serde_json::to_string;
 
-use crate::aria2::domain::{DownloadItem, DownloadSnapshot, GlobalStats, VersionInfo};
+use crate::aria2::domain::{DownloadItem, DownloadSnapshot, Gid, GlobalStats, VersionInfo};
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::{
-    JsonRpcRequest, RequestId, build_get_global_stat_request, build_get_version_request,
-    build_tell_active_request, build_tell_stopped_request, build_tell_waiting_request,
+    JsonRpcRequest, RequestId, build_add_uri_request, build_get_global_stat_request,
+    build_get_version_request, build_tell_active_request, build_tell_stopped_request,
+    build_tell_waiting_request,
 };
 use crate::aria2::raw_types::{
-    parse_download_items_response, parse_get_version_response, parse_global_stats_response,
+    parse_add_uri_response, parse_download_items_response, parse_get_version_response,
+    parse_global_stats_response,
 };
 use crate::config::{RpcAuth, Settings};
 
@@ -16,6 +18,7 @@ const GLOBAL_STATS_REQUEST_ID: RequestId = RequestId::new(2);
 const TELL_ACTIVE_REQUEST_ID: RequestId = RequestId::new(3);
 const TELL_WAITING_REQUEST_ID: RequestId = RequestId::new(4);
 const TELL_STOPPED_REQUEST_ID: RequestId = RequestId::new(5);
+const ADD_URI_REQUEST_ID: RequestId = RequestId::new(6);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -87,6 +90,11 @@ pub fn fetch_download_snapshot(settings: Settings) -> Result<DownloadSnapshot, C
     fetch_download_snapshot_with_transport(&settings, &transport)
 }
 
+pub fn add_uri(settings: Settings, uri: String) -> Result<Gid, ClientError> {
+    let transport = ReqwestTransport::new();
+    add_uri_with_transport(&settings, &transport, &uri)
+}
+
 pub fn test_connection_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -139,6 +147,17 @@ pub fn fetch_download_snapshot_with_transport(
     items.extend(stopped);
 
     Ok(DownloadSnapshot::new(global_stats, items))
+}
+
+pub fn add_uri_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+    uri: &str,
+) -> Result<Gid, ClientError> {
+    let request = build_add_uri_request(ADD_URI_REQUEST_ID, secret(settings), uri);
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
 }
 
 fn fetch_download_items(
@@ -216,8 +235,9 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        HttpPost, HttpResponse, Transport, fetch_download_snapshot_with_transport,
-        fetch_global_stats_with_transport, test_connection_with_transport,
+        HttpPost, HttpResponse, Transport, add_uri_with_transport,
+        fetch_download_snapshot_with_transport, fetch_global_stats_with_transport,
+        test_connection_with_transport,
     };
     use crate::aria2::errors::ClientError;
     use crate::config::{RpcAuth, Secret, Settings, SettingsDraft};
@@ -392,6 +412,47 @@ mod tests {
         assert!(matches!(
             fetch_download_snapshot_with_transport(&settings, &transport),
             Err(ClientError::Transport(_))
+        ));
+    }
+
+    #[test]
+    fn add_uri_posts_json_rpc_add_uri_and_returns_gid() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":6,"result":"new-gid"}"#,
+        )));
+
+        let gid = add_uri_with_transport(&settings, &transport, "https://example.test/file")
+            .expect("addUri should return gid");
+
+        assert_eq!(gid.as_str(), "new-gid");
+
+        let posts = transport.posts.borrow();
+        let body: Value = serde_json::from_str(posts[0].body()).expect("request body is JSON");
+        assert_eq!(body["method"], "aria2.addUri");
+        assert_eq!(body["id"], 6);
+        assert_eq!(body["params"][0][0], "https://example.test/file");
+    }
+
+    #[test]
+    fn add_uri_maps_rpc_and_malformed_responses() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":6,"error":{"code":1,"message":"bad uri"}}"#,
+        )));
+
+        assert!(matches!(
+            add_uri_with_transport(&settings, &transport, "https://example.test/file"),
+            Err(ClientError::Rpc { code: 1, .. })
+        ));
+
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":6,"result":""}"#,
+        )));
+
+        assert!(matches!(
+            add_uri_with_transport(&settings, &transport, "https://example.test/file"),
+            Err(ClientError::MalformedResponse(_))
         ));
     }
 

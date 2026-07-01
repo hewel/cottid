@@ -1,13 +1,64 @@
 use iced::Task;
 
-use super::{ConnectionMessage, DownloadsMessage, Message, SettingsMessage, State, ToolbarMessage};
+use super::{
+    AddMessage, ConnectionMessage, DownloadsMessage, Message, SettingsMessage, State,
+    ToolbarMessage,
+};
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        Message::Add(message) => update_add(state, message),
         Message::Connection(message) => update_connection(state, message),
         Message::Downloads(message) => update_downloads(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+    }
+}
+
+fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
+    match message {
+        AddMessage::Open => {
+            state.open_add_dialog();
+            Task::none()
+        }
+        AddMessage::Cancel => {
+            state.cancel_add_dialog();
+            Task::none()
+        }
+        AddMessage::InputChanged(input) => {
+            state.set_add_input(input);
+            Task::none()
+        }
+        AddMessage::Submit => {
+            let Some((generation, settings, uri)) = state.begin_add_uri() else {
+                return Task::none();
+            };
+
+            Task::perform(
+                async move { crate::aria2::client::add_uri(settings, uri) },
+                move |result| Message::Add(AddMessage::SubmitFinished { generation, result }),
+            )
+        }
+        AddMessage::SubmitFinished { generation, result } => {
+            if state.finish_add_uri(generation, result) {
+                let Some((refresh_generation, refresh_settings)) = state.begin_downloads_refresh()
+                else {
+                    return Task::none();
+                };
+
+                return Task::perform(
+                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings) },
+                    move |result| {
+                        Message::Downloads(DownloadsMessage::RefreshFinished {
+                            generation: refresh_generation,
+                            result,
+                        })
+                    },
+                );
+            }
+
+            Task::none()
+        }
     }
 }
 

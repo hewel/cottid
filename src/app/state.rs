@@ -96,6 +96,7 @@ impl DownloadRowView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
+    add: AddState,
     connection: ConnectionState,
     settings: SettingsState,
     stats: StatsState,
@@ -108,6 +109,13 @@ impl State {
         let draft = SettingsDraft::from_settings(&applied_settings);
 
         Self {
+            add: AddState {
+                open: false,
+                input: String::new(),
+                generation: 0,
+                pending: false,
+                feedback: None,
+            },
             connection: ConnectionState {
                 status: ConnectionStatus::Offline,
                 generation: 0,
@@ -133,6 +141,26 @@ impl State {
 
     pub fn connection_status(&self) -> ConnectionStatus {
         self.connection.status
+    }
+
+    pub fn is_add_open(&self) -> bool {
+        self.add.open
+    }
+
+    pub fn is_add_pending(&self) -> bool {
+        self.add.pending
+    }
+
+    pub fn add_input(&self) -> &str {
+        &self.add.input
+    }
+
+    pub fn add_feedback(&self) -> Option<&str> {
+        self.add.feedback.as_deref()
+    }
+
+    pub fn is_add_ready(&self) -> bool {
+        validate_add_input(&self.add.input).is_ok() && self.is_connected() && !self.add.pending
     }
 
     pub fn is_settings_ready(&self) -> bool {
@@ -396,6 +424,71 @@ impl State {
             .map(str::to_owned);
     }
 
+    pub(super) fn open_add_dialog(&mut self) {
+        self.add.open = true;
+        self.add.feedback = None;
+    }
+
+    pub(super) fn cancel_add_dialog(&mut self) {
+        if self.add.pending {
+            return;
+        }
+
+        self.add.open = false;
+        self.add.input.clear();
+        self.add.feedback = None;
+    }
+
+    pub(super) fn set_add_input(&mut self, input: String) {
+        self.add.input = input;
+        self.add.feedback = None;
+    }
+
+    pub(super) fn begin_add_uri(&mut self) -> Option<(u64, Settings, String)> {
+        let uri = match validate_add_input(&self.add.input) {
+            Ok(uri) => uri,
+            Err(message) => {
+                self.add.feedback = Some(message.to_owned());
+                return None;
+            }
+        };
+
+        let Some(settings) = self.connection.settings.clone() else {
+            self.add.feedback = Some("Connect to aria2 before adding a download.".to_owned());
+            return None;
+        };
+
+        self.add.generation += 1;
+        self.add.pending = true;
+        self.add.feedback = Some("Adding download...".to_owned());
+
+        Some((self.add.generation, settings, uri))
+    }
+
+    pub(super) fn finish_add_uri(
+        &mut self,
+        generation: u64,
+        result: Result<crate::aria2::domain::Gid, ClientError>,
+    ) -> bool {
+        if generation != self.add.generation {
+            return false;
+        }
+
+        self.add.pending = false;
+
+        match result {
+            Ok(_) => {
+                self.add.input.clear();
+                self.add.feedback = Some("Download added.".to_owned());
+                true
+            }
+            Err(error) => {
+                self.add.feedback = Some(error.display_message().to_owned());
+                false
+            }
+        }
+    }
+
     pub(super) fn cancel_settings(&mut self) {
         self.settings.draft.cancel_to(&self.settings.applied);
         self.settings.feedback = None;
@@ -457,6 +550,15 @@ struct ConnectionState {
     generation: u64,
     version: Option<String>,
     settings: Option<Settings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AddState {
+    open: bool,
+    input: String,
+    generation: u64,
+    pending: bool,
+    feedback: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -544,4 +646,25 @@ fn speed_text(item: &DownloadItem) -> String {
     }
 
     format!("Down {}", format_speed(download_speed))
+}
+
+fn validate_add_input(input: &str) -> Result<String, &'static str> {
+    let input = input.trim();
+
+    if input.is_empty() {
+        return Err("Enter one URI or magnet link.");
+    }
+
+    if input.contains('\n') {
+        return Err("Enter only one URI or magnet link.");
+    }
+
+    if input.starts_with("http://")
+        || input.starts_with("https://")
+        || input.starts_with("magnet:?")
+    {
+        return Ok(input.to_owned());
+    }
+
+    Err("Enter an http, https, or magnet link.")
 }
