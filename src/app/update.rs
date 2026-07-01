@@ -1,11 +1,33 @@
 use iced::Task;
 
-use super::{Message, SettingsMessage, State, ToolbarMessage};
+use super::{ConnectionMessage, Message, SettingsMessage, State, ToolbarMessage};
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
+        Message::Connection(message) => update_connection(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+    }
+}
+
+fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Message> {
+    match message {
+        ConnectionMessage::TestRequested => {
+            let Some((generation, settings)) = state.begin_connection_test() else {
+                return Task::none();
+            };
+
+            Task::perform(
+                async move { crate::aria2::client::test_connection(settings) },
+                move |result| {
+                    Message::Connection(ConnectionMessage::TestFinished { generation, result })
+                },
+            )
+        }
+        ConnectionMessage::TestFinished { generation, result } => {
+            state.finish_connection_test(generation, result);
+            Task::none()
+        }
     }
 }
 

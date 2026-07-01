@@ -8,6 +8,8 @@ Critical rules:
 
 - Do not embed aria2, wrap libaria2, or reimplement download logic.
 - Do not add dependencies without explicit human approval.
+- Use Cargo commands such as `cargo add` to add packages or enable dependency
+  features; do not hand-edit dependency entries for that.
 - Keep UI code separate from RPC/client code.
 - UI consumes normalized domain models, never raw JSON-RPC DTOs.
 - Model aria2 GIDs and numeric string fields as typed domain data before they

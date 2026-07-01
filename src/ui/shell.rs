@@ -1,7 +1,9 @@
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
-use crate::app::{ConnectionStatus, Message, SettingsMessage, State, ToolbarMessage};
+use crate::app::{
+    ConnectionMessage, ConnectionStatus, Message, SettingsMessage, State, ToolbarMessage,
+};
 use crate::config::RpcAuthDraft;
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -103,7 +105,8 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         column![
             fields,
             row![
-                button("Test Connection"),
+                button("Test Connection")
+                    .on_press(Message::Connection(ConnectionMessage::TestRequested)),
                 button("Save").on_press(Message::Settings(SettingsMessage::Save)),
                 button("Cancel").on_press(Message::Settings(SettingsMessage::Cancel)),
             ]
@@ -136,5 +139,8 @@ fn auth_button(
 fn connection_label(status: ConnectionStatus) -> &'static str {
     match status {
         ConnectionStatus::Offline => "Offline",
+        ConnectionStatus::Testing => "Testing...",
+        ConnectionStatus::Connected => "Connected",
+        ConnectionStatus::Failed => "Connection failed",
     }
 }

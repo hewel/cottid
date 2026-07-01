@@ -1,8 +1,13 @@
+use crate::aria2::client::ConnectionTest;
+use crate::aria2::errors::ClientError;
 use crate::config::{RpcAuthDraft, Settings, SettingsDraft};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
     Offline,
+    Testing,
+    Connected,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +24,8 @@ impl State {
         Self {
             connection: ConnectionState {
                 status: ConnectionStatus::Offline,
+                generation: 0,
+                version: None,
             },
             settings: SettingsState {
                 applied: applied_settings,
@@ -75,6 +82,56 @@ impl State {
             connection_label(self.connection.status),
             self.settings.applied.auth().display_label()
         )
+    }
+
+    #[cfg(test)]
+    pub fn connected_version(&self) -> Option<&str> {
+        self.connection.version.as_deref()
+    }
+
+    pub(super) fn begin_connection_test(&mut self) -> Option<(u64, Settings)> {
+        let settings = if self.settings.open {
+            match self.settings.draft.apply() {
+                Ok(settings) => settings,
+                Err(error) => {
+                    self.connection.status = ConnectionStatus::Failed;
+                    self.settings.feedback = Some(error.message().to_owned());
+                    return None;
+                }
+            }
+        } else {
+            self.settings.applied.clone()
+        };
+
+        self.connection.generation += 1;
+        self.connection.status = ConnectionStatus::Testing;
+        self.connection.version = None;
+        self.settings.feedback = None;
+
+        Some((self.connection.generation, settings))
+    }
+
+    pub(super) fn finish_connection_test(
+        &mut self,
+        generation: u64,
+        result: Result<ConnectionTest, ClientError>,
+    ) {
+        if generation != self.connection.generation {
+            return;
+        }
+
+        match result {
+            Ok(result) => {
+                self.connection.status = ConnectionStatus::Connected;
+                self.connection.version = Some(result.version().version().to_owned());
+                self.settings.feedback = Some("Connection test succeeded.".to_owned());
+            }
+            Err(error) => {
+                self.connection.status = ConnectionStatus::Failed;
+                self.connection.version = None;
+                self.settings.feedback = Some(error.display_message().to_owned());
+            }
+        }
     }
 
     pub(super) fn open_settings(&mut self) {
@@ -137,6 +194,8 @@ impl State {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ConnectionState {
     status: ConnectionStatus,
+    generation: u64,
+    version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,5 +209,8 @@ struct SettingsState {
 fn connection_label(status: ConnectionStatus) -> &'static str {
     match status {
         ConnectionStatus::Offline => "Offline",
+        ConnectionStatus::Testing => "Testing...",
+        ConnectionStatus::Connected => "Connected",
+        ConnectionStatus::Failed => "Connection failed",
     }
 }

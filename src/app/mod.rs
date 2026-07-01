@@ -5,7 +5,7 @@ mod update;
 
 use iced::{Element, Task};
 
-pub use message::{Message, SettingsMessage, ToolbarMessage};
+pub use message::{ConnectionMessage, Message, SettingsMessage, ToolbarMessage};
 pub use state::{ConnectionStatus, State};
 
 pub fn run() -> iced::Result {
@@ -29,9 +29,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 #[cfg(test)]
 mod tests {
+    use crate::aria2::client::ConnectionTest;
+    use crate::aria2::domain::VersionInfo;
+    use crate::aria2::errors::ClientError;
     use crate::config::RpcAuthDraft;
 
-    use super::{ConnectionStatus, Message, SettingsMessage, State, ToolbarMessage};
+    use super::{
+        ConnectionMessage, ConnectionStatus, Message, SettingsMessage, State, ToolbarMessage,
+    };
 
     #[test]
     fn starts_offline_and_settings_ready() {
@@ -148,5 +153,72 @@ mod tests {
 
         assert_eq!(state.applied_auth_label(), "Token secret");
         assert!(!state.status_text().contains("super-secret"));
+    }
+
+    #[test]
+    fn connection_test_result_updates_visible_connection_state() {
+        let mut state = State::initial();
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestRequested),
+        );
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Testing);
+
+        let result = Ok(ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new())));
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 1,
+                result,
+            }),
+        );
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Connected);
+        assert_eq!(state.connected_version(), Some("1.37.0"));
+        assert_eq!(
+            state.settings_feedback(),
+            Some("Connection test succeeded.")
+        );
+    }
+
+    #[test]
+    fn stale_connection_test_results_are_ignored() {
+        let mut state = State::initial();
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestRequested),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestRequested),
+        );
+
+        let stale_result = Ok(ConnectionTest::new(VersionInfo::new("1.36.0", Vec::new())));
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 1,
+                result: stale_result,
+            }),
+        );
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Testing);
+        assert_eq!(state.connected_version(), None);
+
+        let current_result = Err(ClientError::Transport("connection refused".to_owned()));
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 2,
+                result: current_result,
+            }),
+        );
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Failed);
+        assert_eq!(
+            state.settings_feedback(),
+            Some("Connection test failed. Check the endpoint and secret.")
+        );
     }
 }

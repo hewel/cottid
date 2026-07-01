@@ -61,7 +61,7 @@ impl Secret {
         Self(value.into())
     }
 
-    fn expose_for_session(&self) -> &str {
+    pub(crate) fn expose_for_session(&self) -> &str {
         &self.0
     }
 }

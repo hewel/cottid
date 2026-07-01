@@ -1,4 +1,5 @@
 mod app;
+mod aria2;
 mod config;
 mod ui;
 
