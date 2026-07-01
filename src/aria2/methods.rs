@@ -61,16 +61,31 @@ pub fn build_get_version_request(id: RequestId, secret: Option<&Secret>) -> Json
         jsonrpc: "2.0",
         id,
         method: "aria2.getVersion",
-        params: secret
-            .map(|secret| format!("token:{}", secret.expose_for_session()))
-            .into_iter()
-            .collect(),
+        params: token_params(secret),
     }
+}
+
+pub fn build_get_global_stat_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.getGlobalStat",
+        params: token_params(secret),
+    }
+}
+
+fn token_params(secret: Option<&Secret>) -> Vec<String> {
+    secret
+        .map(|secret| format!("token:{}", secret.expose_for_session()))
+        .into_iter()
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::aria2::methods::{RequestId, build_get_version_request};
+    use crate::aria2::methods::{
+        RequestId, build_get_global_stat_request, build_get_version_request,
+    };
     use crate::config::Secret;
 
     #[test]
@@ -89,5 +104,14 @@ mod tests {
 
         assert_eq!(request.params(), &["token:secret-value"]);
         assert!(!format!("{request:?}").contains("secret-value"));
+    }
+
+    #[test]
+    fn builds_get_global_stat_request() {
+        let request = build_get_global_stat_request(RequestId::new(11), None);
+
+        assert_eq!(request.id(), RequestId::new(11));
+        assert_eq!(request.method(), "aria2.getGlobalStat");
+        assert!(request.params().is_empty());
     }
 }

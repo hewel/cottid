@@ -20,8 +20,8 @@ pub enum ClientError {
 impl ClientError {
     pub fn display_message(&self) -> &'static str {
         match self {
-            Self::Transport(_) => "Connection test failed. Check the endpoint and secret.",
-            Self::HttpStatus(_) => "Connection test failed. Check the endpoint and secret.",
+            Self::Transport(_) => "Connection failed. Check the endpoint and secret.",
+            Self::HttpStatus(_) => "Connection failed. Check the endpoint and secret.",
             Self::MalformedResponse(_) => "aria2 returned a malformed response.",
             Self::ResponseIdMismatch { .. } => "aria2 returned an unexpected response.",
             Self::Rpc { .. } => "aria2 returned an RPC error.",

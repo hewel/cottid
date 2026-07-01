@@ -1,6 +1,8 @@
 use crate::aria2::client::ConnectionTest;
+use crate::aria2::domain::GlobalStats;
 use crate::aria2::errors::ClientError;
 use crate::config::{RpcAuthDraft, Settings, SettingsDraft};
+use crate::util::format::format_speed;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -14,6 +16,7 @@ pub enum ConnectionStatus {
 pub struct State {
     connection: ConnectionState,
     settings: SettingsState,
+    stats: StatsState,
 }
 
 impl State {
@@ -31,6 +34,11 @@ impl State {
                 applied: applied_settings,
                 draft,
                 open: false,
+                feedback: None,
+            },
+            stats: StatsState {
+                generation: 0,
+                global: None,
                 feedback: None,
             },
         }
@@ -76,6 +84,46 @@ impl State {
         self.settings.feedback.as_deref()
     }
 
+    pub fn stats_feedback(&self) -> Option<&str> {
+        self.stats.feedback.as_deref()
+    }
+
+    pub fn download_speed_text(&self) -> String {
+        format_speed(
+            self.stats
+                .global
+                .map(|stats| stats.download_speed_bytes_per_second())
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn upload_speed_text(&self) -> String {
+        format_speed(
+            self.stats
+                .global
+                .map(|stats| stats.upload_speed_bytes_per_second())
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn counts_text(&self) -> String {
+        let Some(stats) = self.stats.global else {
+            return "Active 0 | Waiting 0 | Stopped 0".to_owned();
+        };
+
+        format!(
+            "Active {} | Waiting {} | Stopped {}",
+            stats.active_downloads(),
+            stats.waiting_downloads(),
+            stats.stopped_downloads()
+        )
+    }
+
+    #[cfg(test)]
+    pub fn global_stats(&self) -> Option<GlobalStats> {
+        self.stats.global
+    }
+
     pub fn status_text(&self) -> String {
         format!(
             "{} | {}",
@@ -106,6 +154,8 @@ impl State {
         self.connection.generation += 1;
         self.connection.status = ConnectionStatus::Testing;
         self.connection.version = None;
+        self.stats.global = None;
+        self.stats.feedback = None;
         self.settings.feedback = None;
 
         Some((self.connection.generation, settings))
@@ -115,9 +165,9 @@ impl State {
         &mut self,
         generation: u64,
         result: Result<ConnectionTest, ClientError>,
-    ) {
+    ) -> bool {
         if generation != self.connection.generation {
-            return;
+            return false;
         }
 
         match result {
@@ -125,11 +175,42 @@ impl State {
                 self.connection.status = ConnectionStatus::Connected;
                 self.connection.version = Some(result.version().version().to_owned());
                 self.settings.feedback = Some("Connection test succeeded.".to_owned());
+                true
             }
             Err(error) => {
                 self.connection.status = ConnectionStatus::Failed;
                 self.connection.version = None;
+                self.stats.global = None;
+                self.stats.feedback = None;
                 self.settings.feedback = Some(error.display_message().to_owned());
+                false
+            }
+        }
+    }
+
+    pub(super) fn begin_stats_refresh(&mut self) -> u64 {
+        self.stats.generation += 1;
+        self.stats.feedback = None;
+        self.stats.generation
+    }
+
+    pub(super) fn finish_stats_refresh(
+        &mut self,
+        generation: u64,
+        result: Result<GlobalStats, ClientError>,
+    ) {
+        if generation != self.stats.generation {
+            return;
+        }
+
+        match result {
+            Ok(stats) => {
+                self.stats.global = Some(stats);
+                self.stats.feedback = None;
+            }
+            Err(error) => {
+                self.stats.global = None;
+                self.stats.feedback = Some(error.display_message().to_owned());
             }
         }
     }
@@ -203,6 +284,13 @@ struct SettingsState {
     applied: Settings,
     draft: SettingsDraft,
     open: bool,
+    feedback: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatsState {
+    generation: u64,
+    global: Option<GlobalStats>,
     feedback: Option<String>,
 }
 

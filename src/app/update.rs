@@ -1,10 +1,11 @@
 use iced::Task;
 
-use super::{ConnectionMessage, Message, SettingsMessage, State, ToolbarMessage};
+use super::{ConnectionMessage, Message, SettingsMessage, State, StatsMessage, ToolbarMessage};
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::Connection(message) => update_connection(state, message),
+        Message::Stats(message) => update_stats(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
     }
@@ -17,15 +18,46 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
                 return Task::none();
             };
 
+            let settings_for_test = settings.clone();
+
             Task::perform(
-                async move { crate::aria2::client::test_connection(settings) },
+                async move { crate::aria2::client::test_connection(settings_for_test) },
                 move |result| {
-                    Message::Connection(ConnectionMessage::TestFinished { generation, result })
+                    Message::Connection(ConnectionMessage::TestFinished {
+                        generation,
+                        settings,
+                        result,
+                    })
                 },
             )
         }
-        ConnectionMessage::TestFinished { generation, result } => {
-            state.finish_connection_test(generation, result);
+        ConnectionMessage::TestFinished {
+            generation,
+            settings,
+            result,
+        } => {
+            if state.finish_connection_test(generation, result) {
+                let stats_generation = state.begin_stats_refresh();
+                return Task::perform(
+                    async move { crate::aria2::client::fetch_global_stats(settings) },
+                    move |result| {
+                        Message::Stats(StatsMessage::RefreshFinished {
+                            generation: stats_generation,
+                            result,
+                        })
+                    },
+                );
+            }
+
+            Task::none()
+        }
+    }
+}
+
+fn update_stats(state: &mut State, message: StatsMessage) -> Task<Message> {
+    match message {
+        StatsMessage::RefreshFinished { generation, result } => {
+            state.finish_stats_refresh(generation, result);
             Task::none()
         }
     }

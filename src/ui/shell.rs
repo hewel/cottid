@@ -12,6 +12,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
         text(state.applied_endpoint()),
         text(state.applied_auth_label()),
         text(connection_label(state.connection_status())),
+        text(format!("Down {}", state.download_speed_text())),
+        text(format!("Up {}", state.upload_speed_text())),
         button("Settings").on_press(Message::Toolbar(ToolbarMessage::OpenSettings)),
     ]
     .align_y(Alignment::Center)
@@ -27,6 +29,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let status = row![
         text(state.status_text()),
+        text(state.counts_text()),
         text(if state.is_settings_ready() {
             "Settings ready"
         } else {
@@ -44,6 +47,10 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     if state.is_settings_open() {
         shell = shell.push(settings_modal(state));
+    }
+
+    if let Some(feedback) = state.stats_feedback() {
+        shell = shell.push(text(feedback));
     }
 
     container(shell)

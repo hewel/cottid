@@ -1,12 +1,15 @@
 use serde_json::to_string;
 
-use crate::aria2::domain::VersionInfo;
+use crate::aria2::domain::{GlobalStats, VersionInfo};
 use crate::aria2::errors::ClientError;
-use crate::aria2::methods::{RequestId, build_get_version_request};
-use crate::aria2::raw_types::parse_get_version_response;
+use crate::aria2::methods::{
+    JsonRpcRequest, RequestId, build_get_global_stat_request, build_get_version_request,
+};
+use crate::aria2::raw_types::{parse_get_version_response, parse_global_stats_response};
 use crate::config::{RpcAuth, Settings};
 
 const CONNECTION_TEST_REQUEST_ID: RequestId = RequestId::new(1);
+const GLOBAL_STATS_REQUEST_ID: RequestId = RequestId::new(2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -73,6 +76,11 @@ pub fn test_connection(settings: Settings) -> Result<ConnectionTest, ClientError
     test_connection_with_transport(&settings, &transport)
 }
 
+pub fn fetch_global_stats(settings: Settings) -> Result<GlobalStats, ClientError> {
+    let transport = ReqwestTransport::new();
+    fetch_global_stats_with_transport(&settings, &transport)
+}
+
 pub fn test_connection_with_transport(
     settings: &Settings,
     transport: &impl Transport,
@@ -82,6 +90,31 @@ pub fn test_connection_with_transport(
         RpcAuth::SessionSecret(secret) => Some(secret),
     };
     let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, secret);
+    let body = send_rpc_request(settings, transport, request)?;
+    let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
+
+    Ok(ConnectionTest { version })
+}
+
+pub fn fetch_global_stats_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+) -> Result<GlobalStats, ClientError> {
+    let secret = match settings.auth() {
+        RpcAuth::NoSecret => None,
+        RpcAuth::SessionSecret(secret) => Some(secret),
+    };
+    let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, secret);
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
+}
+
+fn send_rpc_request(
+    settings: &Settings,
+    transport: &impl Transport,
+    request: JsonRpcRequest,
+) -> Result<String, ClientError> {
     let body =
         to_string(&request).map_err(|error| ClientError::MalformedResponse(error.to_string()))?;
     let response = transport.post(HttpPost {
@@ -93,9 +126,7 @@ pub fn test_connection_with_transport(
         return Err(ClientError::HttpStatus(response.status));
     }
 
-    let version = parse_get_version_response(&response.body, CONNECTION_TEST_REQUEST_ID)?;
-
-    Ok(ConnectionTest { version })
+    Ok(response.body)
 }
 
 struct ReqwestTransport {
@@ -135,7 +166,10 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::{HttpPost, HttpResponse, Transport, test_connection_with_transport};
+    use super::{
+        HttpPost, HttpResponse, Transport, fetch_global_stats_with_transport,
+        test_connection_with_transport,
+    };
     use crate::aria2::errors::ClientError;
     use crate::config::{RpcAuth, Secret, Settings, SettingsDraft};
 
@@ -181,6 +215,59 @@ mod tests {
         assert_eq!(body["jsonrpc"], "2.0");
         assert_eq!(body["method"], "aria2.getVersion");
         assert_eq!(body["id"], 1);
+    }
+
+    #[test]
+    fn global_stats_posts_json_rpc_get_global_stat() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":2,"result":{"downloadSpeed":"1536","uploadSpeed":"512","numActive":"2","numWaiting":"3","numStopped":"4"}}"#,
+        )));
+
+        let stats = fetch_global_stats_with_transport(&settings, &transport)
+            .expect("global stats should parse");
+
+        assert_eq!(stats.download_speed_bytes_per_second(), 1536);
+        assert_eq!(stats.upload_speed_bytes_per_second(), 512);
+        assert_eq!(stats.active_downloads(), 2);
+
+        let posts = transport.posts.borrow();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].endpoint(), "http://localhost:6800/jsonrpc");
+
+        let body: Value = serde_json::from_str(posts[0].body()).expect("request body is JSON");
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["method"], "aria2.getGlobalStat");
+        assert_eq!(body["id"], 2);
+    }
+
+    #[test]
+    fn global_stats_maps_http_rpc_and_malformed_responses() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning(Ok(HttpResponse::with_status(503, "busy")));
+
+        assert_eq!(
+            fetch_global_stats_with_transport(&settings, &transport),
+            Err(ClientError::HttpStatus(503))
+        );
+
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":2,"error":{"code":1,"message":"bad token"}}"#,
+        )));
+
+        assert!(matches!(
+            fetch_global_stats_with_transport(&settings, &transport),
+            Err(ClientError::Rpc { code: 1, .. })
+        ));
+
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":2,"result":{"downloadSpeed":"fast","uploadSpeed":"0","numActive":"0","numWaiting":"0","numStopped":"0"}}"#,
+        )));
+
+        assert!(matches!(
+            fetch_global_stats_with_transport(&settings, &transport),
+            Err(ClientError::MalformedResponse(_))
+        ));
     }
 
     #[test]
