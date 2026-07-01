@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(detail.gid(), "active-gid");
         assert_eq!(detail.status(), "Active");
         assert_eq!(detail.progress(), "50% | 1.0 KiB / 2.0 KiB");
-        assert_eq!(detail.speeds(), "Down 512 B/s");
+        assert_eq!(detail.speeds(), "Down 512 B/s | ETA 2s");
         assert_eq!(detail.files()[0], "/tmp/active-gid.bin | 1.0 KiB / 2.0 KiB");
     }
 

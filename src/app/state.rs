@@ -8,7 +8,7 @@ use crate::config::{
     ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft, default_config_path,
     load_config, save_config,
 };
-use crate::util::format::{format_bytes, format_speed};
+use crate::util::format::{format_bytes, format_count, format_eta, format_progress, format_speed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -366,10 +366,10 @@ impl State {
         };
 
         format!(
-            "Active {} | Waiting {} | Stopped {}",
-            stats.active_downloads(),
-            stats.waiting_downloads(),
-            stats.stopped_downloads()
+            "{} | {} | {}",
+            format_count("Active", stats.active_downloads() as usize),
+            format_count("Waiting", stats.waiting_downloads() as usize),
+            format_count("Stopped", stats.stopped_downloads() as usize)
         )
     }
 
@@ -1069,18 +1069,7 @@ fn download_name(item: &DownloadItem) -> String {
 }
 
 fn progress_text(item: &DownloadItem) -> String {
-    if item.total_length_bytes() == 0 {
-        return format!("{} / unknown", format_bytes(item.completed_length_bytes()));
-    }
-
-    let percentage =
-        item.completed_length_bytes() as f64 * 100.0 / item.total_length_bytes() as f64;
-
-    format!(
-        "{percentage:.0}% | {} / {}",
-        format_bytes(item.completed_length_bytes()),
-        format_bytes(item.total_length_bytes())
-    )
+    format_progress(item.completed_length_bytes(), item.total_length_bytes())
 }
 
 fn speed_text(item: &DownloadItem) -> String {
@@ -1095,7 +1084,14 @@ fn speed_text(item: &DownloadItem) -> String {
         );
     }
 
-    format!("Down {}", format_speed(download_speed))
+    let eta = item
+        .total_length_bytes()
+        .saturating_sub(item.completed_length_bytes());
+    format!(
+        "Down {} | {}",
+        format_speed(download_speed),
+        format_eta(eta, download_speed)
+    )
 }
 
 fn validate_add_input(input: &str) -> Result<String, &'static str> {
