@@ -9,4 +9,11 @@ Run against an existing aria2 RPC server.
 - Actions: pause, unpause, remove one row, and confirm pending state plus refresh.
 - Purge: complete or stop a download, purge stopped results, and confirm refresh.
 - Recovery: stop the daemon after a successful refresh and confirm stale snapshot remains.
-- Secret redaction: use a session token and confirm UI/loggable debug text does not expose it.
+- Secret storage: use a token, save/test connection, restart Cottid, and confirm
+  the token is restored without appearing in the config file when keyring
+  storage is available.
+- Plaintext fallback: simulate unavailable keyring storage if possible and
+  confirm the settings panel requires choosing plaintext fallback or
+  session-only token use.
+- Secret redaction: use a token and confirm UI/loggable debug text does not
+  expose it.

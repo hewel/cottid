@@ -155,23 +155,30 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
                 .unwrap_or("Settings are not persisted yet."),
         ));
 
-    container(
-        column![
-            fields,
-            row![
-                button("Test Connection")
-                    .on_press(Message::Connection(ConnectionMessage::TestRequested)),
-                button("Save").on_press(Message::Settings(SettingsMessage::Save)),
-                button("Cancel").on_press(Message::Settings(SettingsMessage::Cancel)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(16),
-    )
-    .padding(16)
-    .width(Length::Fill)
-    .into()
+    let mut actions = row![
+        button("Test Connection").on_press(Message::Connection(ConnectionMessage::TestRequested)),
+        button("Save").on_press(Message::Settings(SettingsMessage::Save)),
+        button("Cancel").on_press(Message::Settings(SettingsMessage::Cancel)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    if state.is_plaintext_fallback_pending() {
+        actions = actions
+            .push(
+                button("Save Plaintext")
+                    .on_press(Message::Settings(SettingsMessage::SavePlaintextFallback)),
+            )
+            .push(
+                button("Session Only")
+                    .on_press(Message::Settings(SettingsMessage::KeepSecretSessionOnly)),
+            );
+    }
+
+    container(column![fields, actions].spacing(16))
+        .padding(16)
+        .width(Length::Fill)
+        .into()
 }
 
 fn auth_button(

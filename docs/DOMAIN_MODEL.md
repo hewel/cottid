@@ -143,10 +143,43 @@ Expected modes:
 
 - No secret.
 - Session-only secret.
-- Future persistent secret policy.
+- Persistent token loaded from the OS keyring.
+- Plaintext fallback token after explicit user confirmation.
 
 Secret values must not appear in debug output, logs, UI labels, or error text.
-Persistent secret storage requires explicit approval.
+Persistent tokens are bound to the exact `RpcEndpoint` URL. Changing endpoints
+requires storing a new token and deleting the old endpoint's stored token.
+
+### PersistedConfig
+
+`PersistedConfig` describes local Cottid settings stored on disk.
+
+Expected fields:
+
+- RPC endpoint URL.
+- Polling interval.
+- Selected download filter or other UI preferences.
+- Auth storage policy.
+
+The config file is TOML at the existing Cottid config path. It may contain a
+plaintext fallback token only after explicit user confirmation. Keyring-backed
+tokens store only metadata in the config file; the token value lives in the OS
+credential store.
+
+### AuthStorage
+
+`AuthStorage` describes where a token is expected to live.
+
+Expected modes:
+
+- None.
+- Keyring.
+- Plaintext fallback.
+- Session only.
+
+Keyring is the preferred persistent mode. Plaintext fallback is a convenience
+fallback for unavailable keyrings, not the default security posture. Session
+only means the token is usable until exit and must be entered again next launch.
 
 ### ConnectionState
 

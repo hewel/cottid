@@ -233,6 +233,14 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
             state.save_settings();
             Task::none()
         }
+        SettingsMessage::SavePlaintextFallback => {
+            state.save_plaintext_fallback();
+            Task::none()
+        }
+        SettingsMessage::KeepSecretSessionOnly => {
+            state.keep_secret_session_only();
+            Task::none()
+        }
         SettingsMessage::EndpointChanged(endpoint) => {
             state.set_draft_endpoint(endpoint);
             Task::none()

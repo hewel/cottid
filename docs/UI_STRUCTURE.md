@@ -196,9 +196,12 @@ MVP settings:
 
 Settings use draft state separate from applied connection settings. Secret
 values must not appear in logs, error text, status bar text, or debug-style UI.
+Successful connection tests from the settings panel apply and save the tested
+settings while leaving the panel open with confirmation. If secure token storage
+fails, show inline choices for plaintext fallback or session-only token use.
 
-Do not add multi-profile management, daemon settings, keyring integration, or
-database-backed settings in MVP.
+Do not add multi-profile management, daemon settings, or database-backed
+settings in MVP.
 
 ## Status Bar
 

@@ -15,7 +15,7 @@ No dependency may be added without human approval.
   crates.
 - Before config persistence: propose and approve config path/format crates, or
   document a stdlib-only fallback and its limits.
-- Future-only approvals: WebSocket client, keyring, file dialog, tray, browser
+- Future-only approvals: WebSocket client, file dialog, tray, browser
   integration, and any process-management helpers.
 
 Each proposal must include crate name, purpose, alternatives, why existing
@@ -63,12 +63,13 @@ preferences.
 
 Affected modules: `config`, settings state, settings UI.
 
-User-visible behavior: editable connection settings, initially in memory unless
-persistence is approved.
+User-visible behavior: editable connection settings persisted as local TOML,
+with OS-keyring token storage and explicit plaintext fallback when secure
+storage is unavailable.
 
 Risks: insecure secret persistence or premature multi-profile design.
 
-Do not include: keyring, daemon config, database, multi-profile UI.
+Do not include: daemon config, database, multi-profile UI.
 
 Architecture check: secret handling policy is explicit and documented.
 

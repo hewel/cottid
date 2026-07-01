@@ -83,6 +83,8 @@ pub enum ToolbarMessage {
 pub enum SettingsMessage {
     Cancel,
     Save,
+    SavePlaintextFallback,
+    KeepSecretSessionOnly,
     EndpointChanged(String),
     AuthChanged(RpcAuthDraft),
     SecretChanged(String),

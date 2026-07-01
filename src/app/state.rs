@@ -5,8 +5,8 @@ use crate::aria2::client::ConnectionTest;
 use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats};
 use crate::aria2::errors::ClientError;
 use crate::config::{
-    ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft, default_config_path,
-    load_config, save_config,
+    AuthStorage, ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft,
+    SystemTokenStore, default_config_path, load_config, save_config_with_token_store,
 };
 use crate::util::format::{format_bytes, format_count, format_eta, format_progress, format_speed};
 
@@ -264,6 +264,8 @@ impl State {
                 open: false,
                 feedback,
                 config_path,
+                auth_storage: config.auth_storage(),
+                pending_plaintext_fallback: None,
             },
             stats: StatsState { global: None },
             downloads: DownloadsState {
@@ -340,6 +342,10 @@ impl State {
 
     pub fn settings_feedback(&self) -> Option<&str> {
         self.settings.feedback.as_deref()
+    }
+
+    pub fn is_plaintext_fallback_pending(&self) -> bool {
+        self.settings.pending_plaintext_fallback.is_some()
     }
 
     pub fn download_speed_text(&self) -> String {
@@ -539,8 +545,18 @@ impl State {
             Ok(result) => {
                 self.connection.status = ConnectionStatus::Connected;
                 self.connection.version = Some(result.version().version().to_owned());
-                self.connection.settings = Some(settings);
-                self.settings.feedback = Some("Connection test succeeded.".to_owned());
+                self.connection.settings = Some(settings.clone());
+                if self.settings.open {
+                    let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
+                    self.commit_settings(
+                        settings,
+                        previous_endpoint,
+                        false,
+                        "Connection test succeeded and settings saved.",
+                    );
+                } else {
+                    self.settings.feedback = Some("Connection test succeeded.".to_owned());
+                }
                 true
             }
             Err(error) => {
@@ -595,7 +611,7 @@ impl State {
 
     pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {
         self.downloads.filter = filter;
-        self.persist_config();
+        self.persist_config(None, None);
     }
 
     pub(super) fn select_download(&mut self, gid: Gid) {
@@ -760,6 +776,17 @@ impl State {
     }
 
     pub(super) fn cancel_settings(&mut self) {
+        if let Some(pending) = self.settings.pending_plaintext_fallback.take() {
+            self.settings.applied = pending.previous_settings;
+            self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+            self.settings.auth_storage = pending.previous_auth_storage;
+            if self.connection.settings.as_ref() == Some(&pending.settings) {
+                self.connection.status = ConnectionStatus::Offline;
+                self.connection.version = None;
+                self.connection.settings = None;
+                self.clear_snapshot();
+            }
+        }
         self.settings.draft.cancel_to(&self.settings.applied);
         self.settings.feedback = None;
         self.settings.open = false;
@@ -794,11 +821,8 @@ impl State {
     pub(super) fn save_settings(&mut self) {
         match self.settings.draft.apply() {
             Ok(settings) => {
-                self.settings.applied = settings;
-                self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
-                self.settings.feedback = None;
-                self.settings.open = false;
-                self.persist_config();
+                let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
+                self.commit_settings(settings, previous_endpoint, true, "Settings saved.");
             }
             Err(error) => {
                 self.settings.feedback = Some(error.message().to_owned());
@@ -807,17 +831,156 @@ impl State {
         }
     }
 
-    fn persist_config(&mut self) {
+    pub(super) fn save_plaintext_fallback(&mut self) {
+        let Some(pending) = self.settings.pending_plaintext_fallback.clone() else {
+            return;
+        };
+
+        self.settings.applied = pending.settings.clone();
+        self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.pending_plaintext_fallback = None;
+        self.settings.auth_storage = AuthStorage::PlaintextFallback;
+        self.persist_config_with_auth_storage(
+            AuthStorage::PlaintextFallback,
+            pending.previous_endpoint,
+            None,
+        );
+        self.settings.feedback = Some(pending.success_feedback.to_owned());
+        self.settings.open = !pending.close_on_success;
+    }
+
+    pub(super) fn keep_secret_session_only(&mut self) {
+        let Some(pending) = self.settings.pending_plaintext_fallback.clone() else {
+            return;
+        };
+
+        self.settings.applied = pending.settings.clone();
+        self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.pending_plaintext_fallback = None;
+        self.settings.auth_storage = AuthStorage::SessionOnly;
+        self.persist_config_with_auth_storage(
+            AuthStorage::SessionOnly,
+            pending.previous_endpoint,
+            None,
+        );
+        self.settings.feedback =
+            Some("Settings saved. Token will be required again next launch.".to_owned());
+        self.settings.open = !pending.close_on_success;
+    }
+
+    fn commit_settings(
+        &mut self,
+        settings: Settings,
+        previous_endpoint: Option<String>,
+        close_on_success: bool,
+        success_feedback: &'static str,
+    ) {
+        let previous_settings = self.settings.applied.clone();
+        let previous_auth_storage = self.settings.auth_storage;
+        self.settings.applied = settings;
+        self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.auth_storage = self.next_auth_storage();
+        self.settings.pending_plaintext_fallback = None;
+        self.settings.feedback = None;
+        self.settings.open = !close_on_success;
+
+        let persisted = self.persist_config(
+            previous_endpoint.clone(),
+            Some((previous_settings, previous_auth_storage)),
+        );
+        if persisted {
+            self.settings.feedback = Some(success_feedback.to_owned());
+        } else if self.settings.pending_plaintext_fallback.is_some()
+            && let Some(pending) = self.settings.pending_plaintext_fallback.as_mut()
+        {
+            pending.close_on_success = close_on_success;
+            pending.success_feedback = success_feedback;
+        }
+    }
+
+    fn next_auth_storage(&self) -> AuthStorage {
+        if matches!(
+            self.settings.applied.auth(),
+            crate::config::RpcAuth::NoSecret
+        ) {
+            return AuthStorage::None;
+        }
+
+        if matches!(self.settings.auth_storage, AuthStorage::PlaintextFallback) {
+            AuthStorage::PlaintextFallback
+        } else {
+            AuthStorage::Keyring
+        }
+    }
+
+    fn persist_config(
+        &mut self,
+        previous_endpoint: Option<String>,
+        rollback: Option<(Settings, AuthStorage)>,
+    ) -> bool {
+        self.persist_config_with_auth_storage(
+            self.settings.auth_storage,
+            previous_endpoint,
+            rollback,
+        )
+    }
+
+    fn persist_config_with_auth_storage(
+        &mut self,
+        auth_storage: AuthStorage,
+        previous_endpoint: Option<String>,
+        rollback: Option<(Settings, AuthStorage)>,
+    ) -> bool {
         let config = PersistedConfig::new(
             self.settings.applied.clone(),
             self.downloads.filter.config_value(),
         );
+        let config = PersistedConfig::with_auth_storage(
+            self.settings.applied.clone(),
+            config.selected_filter(),
+            auth_storage,
+        );
 
-        if let Some(path) = self.settings.config_path.as_ref() {
-            if let Err(error) = save_config(path, &config) {
+        if let Some(path) = self.settings.config_path.as_ref()
+            && let Err(error) = save_config_with_token_store(
+                path,
+                &config,
+                previous_endpoint.as_deref(),
+                &SystemTokenStore,
+            )
+        {
+            if error.is_token_store_error()
+                && matches!(auth_storage, AuthStorage::Keyring)
+                && !matches!(
+                    self.settings.applied.auth(),
+                    crate::config::RpcAuth::NoSecret
+                )
+            {
+                self.settings.pending_plaintext_fallback = Some(PendingSettingsSave {
+                    settings: self.settings.applied.clone(),
+                    previous_settings: rollback.as_ref().map_or_else(
+                        || self.settings.applied.clone(),
+                        |(settings, _)| settings.clone(),
+                    ),
+                    previous_auth_storage: rollback
+                        .as_ref()
+                        .map_or(self.settings.auth_storage, |(_, auth_storage)| {
+                            *auth_storage
+                        }),
+                    previous_endpoint,
+                    close_on_success: false,
+                    success_feedback: "Settings saved.",
+                });
                 self.settings.feedback = Some(error.message().to_owned());
+                self.settings.open = true;
+                return false;
             }
+
+            self.settings.feedback = Some(error.message().to_owned());
+            return false;
         }
+
+        true
     }
 
     fn clear_snapshot(&mut self) {
@@ -917,6 +1080,18 @@ struct SettingsState {
     open: bool,
     feedback: Option<String>,
     config_path: Option<PathBuf>,
+    auth_storage: AuthStorage,
+    pending_plaintext_fallback: Option<PendingSettingsSave>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingSettingsSave {
+    settings: Settings,
+    previous_settings: Settings,
+    previous_auth_storage: AuthStorage,
+    previous_endpoint: Option<String>,
+    close_on_success: bool,
+    success_feedback: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -160,6 +160,45 @@ mod tests {
     }
 
     #[test]
+    fn successful_settings_connection_test_applies_and_saves_settings() {
+        let path = temp_config_path("test-connection-save");
+        let mut state = State::load_from_path(path.clone());
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "http://aria2.local:6800/jsonrpc".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestRequested),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 1,
+                settings: Settings::new_without_secret("http://aria2.local:6800/jsonrpc", 2)
+                    .expect("settings"),
+                result: Ok(ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new()))),
+            }),
+        );
+
+        let reloaded = State::load_from_path(path);
+
+        assert!(state.is_settings_open());
+        assert_eq!(
+            state.settings_feedback(),
+            Some("Connection test succeeded and settings saved.")
+        );
+        assert_eq!(
+            reloaded.applied_endpoint(),
+            "http://aria2.local:6800/jsonrpc"
+        );
+    }
+
+    #[test]
     fn selected_filter_persists_as_ui_preference() {
         let path = temp_config_path("filter");
         let mut state = State::load_from_path(path.clone());
@@ -189,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn session_secret_is_not_restored_from_saved_settings() {
+    fn secure_token_is_restored_without_writing_plaintext_config() {
         let path = temp_config_path("session-secret");
         let mut state = State::load_from_path(path.clone());
 
@@ -207,7 +246,7 @@ mod tests {
         let reloaded = State::load_from_path(path);
 
         assert!(!contents.contains("super-secret"));
-        assert_eq!(reloaded.applied_auth_label(), "No authentication");
+        assert_eq!(reloaded.applied_auth_label(), "Token secret");
     }
 
     #[test]
