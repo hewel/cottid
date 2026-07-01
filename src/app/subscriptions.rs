@@ -8,7 +8,7 @@ use super::{
 };
 
 pub fn subscription(state: &super::State) -> Subscription<Message> {
-    let keyboard = event::listen_with(keyboard_shortcut);
+    let keyboard = event::listen_with(app_event);
 
     if state.is_connected() {
         return Subscription::batch([
@@ -23,11 +23,11 @@ pub fn subscription(state: &super::State) -> Subscription<Message> {
     keyboard
 }
 
-fn keyboard_shortcut(
-    event: Event,
-    _status: event::Status,
-    _window: iced::window::Id,
-) -> Option<Message> {
+fn app_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
+    if let Event::Window(iced::window::Event::Resized(size)) = event {
+        return Some(Message::WindowResized(size.width.round() as u32));
+    }
+
     let Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
         return None;
     };
@@ -60,7 +60,7 @@ fn keyboard_shortcut(
 mod tests {
     use iced::keyboard;
 
-    use super::keyboard_shortcut;
+    use super::app_event;
     use crate::app::{
         AddMessage, DownloadsMessage, Message, SelectionMessage, SettingsMessage, ToolbarMessage,
     };
@@ -119,7 +119,7 @@ mod tests {
     }
 
     fn shortcut(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Message> {
-        keyboard_shortcut(
+        app_event(
             iced::Event::Keyboard(keyboard::Event::KeyPressed {
                 key,
                 modified_key: keyboard::Key::Unidentified,

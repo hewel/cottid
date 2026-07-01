@@ -15,6 +15,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Selection(message) => update_selection(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+        Message::WindowResized(width) => {
+            state.set_viewport_width(width);
+            Task::none()
+        }
     }
 }
 
@@ -40,7 +44,10 @@ pub fn start_connection_test(state: &mut State) -> Task<Message> {
 fn update_selection(state: &mut State, message: SelectionMessage) -> Task<Message> {
     match message {
         SelectionMessage::Select(gid) => {
-            state.select_download(gid);
+            if state.select_download(gid) {
+                return start_dirty_refresh(state);
+            }
+
             Task::none()
         }
         SelectionMessage::Clear => {
@@ -93,27 +100,7 @@ fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
             result,
         } => {
             if state.finish_action(generation, target, result) {
-                let Some((refresh_generation, refresh_settings, refresh_request)) =
-                    state.begin_dirty_downloads_refresh()
-                else {
-                    return Task::none();
-                };
-
-                return Task::perform(
-                    async move {
-                        crate::aria2::client::fetch_download_snapshot_with_request(
-                            refresh_settings,
-                            refresh_request,
-                        )
-                        .await
-                    },
-                    move |result| {
-                        Message::Downloads(DownloadsMessage::RefreshFinished {
-                            generation: refresh_generation,
-                            result,
-                        })
-                    },
-                );
+                return start_dirty_refresh(state);
             }
 
             Task::none()
@@ -147,27 +134,7 @@ fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
         }
         AddMessage::SubmitFinished { generation, result } => {
             if state.finish_add_uri(generation, result) {
-                let Some((refresh_generation, refresh_settings, refresh_request)) =
-                    state.begin_dirty_downloads_refresh()
-                else {
-                    return Task::none();
-                };
-
-                return Task::perform(
-                    async move {
-                        crate::aria2::client::fetch_download_snapshot_with_request(
-                            refresh_settings,
-                            refresh_request,
-                        )
-                        .await
-                    },
-                    move |result| {
-                        Message::Downloads(DownloadsMessage::RefreshFinished {
-                            generation: refresh_generation,
-                            result,
-                        })
-                    },
-                );
+                return start_dirty_refresh(state);
             }
 
             Task::none()
@@ -249,20 +216,7 @@ fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Messag
             if !state.invalidate_refresh(invalidation) {
                 return Task::none();
             }
-            let Some((generation, settings, request)) = state.begin_dirty_downloads_refresh()
-            else {
-                return Task::none();
-            };
-
-            Task::perform(
-                async move {
-                    crate::aria2::client::fetch_download_snapshot_with_request(settings, request)
-                        .await
-                },
-                move |result| {
-                    Message::Downloads(DownloadsMessage::RefreshFinished { generation, result })
-                },
-            )
+            start_dirty_refresh(state)
         }
         DownloadsMessage::FilterChanged(filter) => {
             state.set_download_filter(filter);
@@ -273,6 +227,19 @@ fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Messag
             Task::none()
         }
     }
+}
+
+fn start_dirty_refresh(state: &mut State) -> Task<Message> {
+    let Some((generation, settings, request)) = state.begin_dirty_downloads_refresh() else {
+        return Task::none();
+    };
+
+    Task::perform(
+        async move {
+            crate::aria2::client::fetch_download_snapshot_with_request(settings, request).await
+        },
+        move |result| Message::Downloads(DownloadsMessage::RefreshFinished { generation, result }),
+    )
 }
 
 fn update_toolbar(state: &mut State, message: ToolbarMessage) -> Task<Message> {

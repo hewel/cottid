@@ -15,6 +15,25 @@ const DOWNLOAD_ITEM_KEYS: [&str; 7] = [
     "files",
 ];
 
+const DOWNLOAD_DETAIL_KEYS: [&str; 16] = [
+    "gid",
+    "status",
+    "totalLength",
+    "completedLength",
+    "downloadSpeed",
+    "uploadSpeed",
+    "dir",
+    "connections",
+    "pieceLength",
+    "numPieces",
+    "errorCode",
+    "errorMessage",
+    "infoHash",
+    "seeder",
+    "numSeeders",
+    "files",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct RequestId(u64);
@@ -154,6 +173,23 @@ pub fn build_tell_stopped_request(
     }
 }
 
+pub fn build_tell_status_request(
+    id: RequestId,
+    secret: Option<&Secret>,
+    gid: &Gid,
+) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::String(gid.as_str().to_owned()));
+    params.push(download_detail_keys_param());
+
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.tellStatus",
+        params,
+    }
+}
+
 pub fn build_add_uri_request(id: RequestId, secret: Option<&Secret>, uri: &str) -> JsonRpcRequest {
     let mut params = token_params(secret);
     params.push(JsonRpcParam::StringList(vec![uri.to_owned()]));
@@ -225,6 +261,14 @@ pub fn build_tell_stopped_call(secret: Option<&Secret>, count: u64) -> Multicall
     MulticallMethod::new("aria2.tellStopped", params)
 }
 
+pub fn build_tell_status_call(secret: Option<&Secret>, gid: &Gid) -> MulticallMethod {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::String(gid.as_str().to_owned()));
+    params.push(download_detail_keys_param());
+
+    MulticallMethod::new("aria2.tellStatus", params)
+}
+
 fn build_gid_command_request(
     id: RequestId,
     secret: Option<&Secret>,
@@ -258,9 +302,18 @@ fn download_item_keys_param() -> JsonRpcParam {
     )
 }
 
+fn download_detail_keys_param() -> JsonRpcParam {
+    JsonRpcParam::StringList(
+        DOWNLOAD_DETAIL_KEYS
+            .iter()
+            .map(|key| (*key).to_owned())
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::download_item_keys_param;
+    use super::{download_detail_keys_param, download_item_keys_param};
     use serde_json::Value;
 
     use crate::aria2::domain::Gid;
@@ -268,9 +321,9 @@ mod tests {
         JsonRpcParam, RequestId, build_add_uri_request, build_get_global_stat_call,
         build_get_global_stat_request, build_get_version_request, build_multicall_request,
         build_pause_request, build_purge_stopped_request, build_remove_request,
-        build_tell_active_call, build_tell_active_request, build_tell_stopped_call,
-        build_tell_stopped_request, build_tell_waiting_call, build_tell_waiting_request,
-        build_unpause_request,
+        build_tell_active_call, build_tell_active_request, build_tell_status_call,
+        build_tell_status_request, build_tell_stopped_call, build_tell_stopped_request,
+        build_tell_waiting_call, build_tell_waiting_request, build_unpause_request,
     };
     use crate::config::Secret;
 
@@ -363,6 +416,26 @@ mod tests {
     }
 
     #[test]
+    fn builds_tell_status_request_with_detail_keys() {
+        let gid = Gid::new("abc123").expect("valid gid");
+        let request = build_tell_status_request(RequestId::new(24), None, &gid);
+
+        assert_eq!(request.method(), "aria2.tellStatus");
+        assert_eq!(
+            request.params(),
+            &[
+                JsonRpcParam::String("abc123".to_owned()),
+                download_detail_keys_param(),
+            ]
+        );
+
+        let body = serde_json::to_value(&request).expect("request serializes");
+        assert_eq!(body["params"][0], "abc123");
+        assert_eq!(body["params"][1][0], "gid");
+        assert_eq!(body["params"][1][15], "files");
+    }
+
+    #[test]
     fn builds_add_uri_request_with_uri_array() {
         let request = build_add_uri_request(RequestId::new(31), None, "https://example.test/file");
         let body: Value = serde_json::to_value(&request).expect("request serializes");
@@ -413,6 +486,7 @@ mod tests {
                 build_tell_active_call(Some(&secret)),
                 build_tell_waiting_call(Some(&secret)),
                 build_tell_stopped_call(Some(&secret), 50),
+                build_tell_status_call(Some(&secret), &Gid::new("abc123").expect("valid gid")),
             ],
         );
 
@@ -426,6 +500,10 @@ mod tests {
         assert_eq!(body["params"][0][1]["methodName"], "aria2.tellActive");
         assert_eq!(body["params"][0][1]["params"][0], "token:secret-value");
         assert_eq!(body["params"][0][1]["params"][1][0], "gid");
+        assert_eq!(body["params"][0][4]["methodName"], "aria2.tellStatus");
+        assert_eq!(body["params"][0][4]["params"][0], "token:secret-value");
+        assert_eq!(body["params"][0][4]["params"][1], "abc123");
+        assert_eq!(body["params"][0][4]["params"][2][15], "files");
         assert!(!format!("{request:?}").contains("secret-value"));
     }
 

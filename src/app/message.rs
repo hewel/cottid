@@ -16,6 +16,7 @@ pub enum Message {
     Selection(SelectionMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
+    WindowResized(u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -327,13 +327,19 @@ code paths, never in view-facing state.
 
 ### TorrentDetails
 
-Reserve a typed optional torrent detail model for later.
+`TorrentDetails` is an optional typed detail extension for selected downloads.
+It is display-only in the MVP UI and must not introduce torrent-specific
+commands.
 
-Potential future fields:
+Current fields:
 
 - Info hash.
 - Seeder flag.
-- Seeder and leecher counts.
+- Seeder count.
+
+Potential future fields:
+
+- Leecher count.
 - Peers.
 - Trackers.
 - Piece information.

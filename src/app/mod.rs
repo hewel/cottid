@@ -11,7 +11,8 @@ pub use message::{
     RefreshInvalidation, SelectionMessage, SettingsMessage, ToolbarMessage,
 };
 pub use state::{
-    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, RefreshState, State,
+    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, FileIcon, RefreshState,
+    State,
 };
 
 pub fn run() -> iced::Result {
@@ -54,7 +55,8 @@ mod tests {
 
     use crate::aria2::client::ConnectionTest;
     use crate::aria2::domain::{
-        DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats, VersionInfo,
+        DownloadDetail, DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid,
+        GlobalStats, TorrentDetail, VersionInfo,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
@@ -62,7 +64,7 @@ mod tests {
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadsMessage, Message, RefreshInvalidation, RefreshState,
+        DownloadFilter, DownloadsMessage, FileIcon, Message, RefreshInvalidation, RefreshState,
         SelectionMessage, SettingsMessage, State, ToolbarMessage,
     };
 
@@ -146,6 +148,19 @@ mod tests {
         let state = State::initial();
 
         let _subscription = super::subscription(&state);
+    }
+
+    #[test]
+    fn window_resize_updates_compact_layout_state() {
+        let mut state = State::initial();
+
+        let _task = super::update(&mut state, Message::WindowResized(720));
+
+        assert!(state.is_compact_layout());
+
+        let _task = super::update(&mut state, Message::WindowResized(1200));
+
+        assert!(!state.is_compact_layout());
     }
 
     #[test]
@@ -689,6 +704,95 @@ mod tests {
     }
 
     #[test]
+    fn selecting_download_requests_selected_detail_refresh() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Selection(SelectionMessage::Select(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+    }
+
+    #[test]
+    fn selected_detail_merges_torrent_metadata_without_losing_summary() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let selected_gid = Gid::new("active-gid").expect("valid gid");
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        state.select_download(selected_gid.clone());
+        let (generation, _, request) = state.begin_dirty_downloads_refresh().expect("refresh");
+        assert_eq!(request.selected_gid(), Some(&selected_gid));
+
+        let mut detail = DownloadDetail::new(download_item("active-gid", DownloadStatus::Active));
+        detail.set_directory(Some("/downloads".to_owned()));
+        detail.set_connections(4);
+        detail.set_piece_length_bytes(262_144);
+        detail.set_piece_count(32);
+        detail.set_torrent(Some(TorrentDetail::new(
+            Some("0123456789abcdef".to_owned()),
+            true,
+            12,
+        )));
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation,
+                result: Ok(DownloadSnapshot::with_selected_detail(
+                    GlobalStats::new(1_536, 512, 1, 0, 0),
+                    Vec::new(),
+                    Some(detail),
+                )),
+            }),
+        );
+
+        let detail = state.selected_download_detail().expect("selected detail");
+        assert_eq!(detail.directory(), Some("/downloads"));
+        assert!(detail.technical().contains(&"Connections 4".to_owned()));
+        assert!(
+            detail
+                .torrent()
+                .contains(&"Info hash 0123456789abcdef".to_owned())
+        );
+        assert!(detail.torrent().contains(&"Seeding yes".to_owned()));
+    }
+
+    #[test]
+    fn download_rows_classify_curated_file_icons() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item_with_path("movie-gid", DownloadStatus::Active, "/tmp/movie.mkv"),
+                download_item_with_path("archive-gid", DownloadStatus::Active, "/tmp/data.zip"),
+                download_item_with_path(
+                    "torrent-gid",
+                    DownloadStatus::Active,
+                    "/tmp/linux.torrent",
+                ),
+            ],
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(rows[0].file_icon(), FileIcon::Video);
+        assert_eq!(rows[1].file_icon(), FileIcon::Archive);
+        assert_eq!(rows[2].file_icon(), FileIcon::Torrent);
+    }
+
+    #[test]
     fn disappeared_selected_download_clears_selection() {
         let mut state = State::initial();
         connect(&mut state);
@@ -696,12 +800,7 @@ mod tests {
             &mut state,
             vec![download_item("active-gid", DownloadStatus::Active)],
         );
-        let _task = super::update(
-            &mut state,
-            Message::Selection(SelectionMessage::Select(
-                Gid::new("active-gid").expect("valid gid"),
-            )),
-        );
+        state.select_download(Gid::new("active-gid").expect("valid gid"));
 
         apply_snapshot(
             &mut state,
@@ -1044,6 +1143,14 @@ mod tests {
     }
 
     fn download_item(gid: &str, status: DownloadStatus) -> DownloadItem {
+        download_item_with_path(gid, status, format!("/tmp/{gid}.bin"))
+    }
+
+    fn download_item_with_path(
+        gid: &str,
+        status: DownloadStatus,
+        path: impl Into<String>,
+    ) -> DownloadItem {
         DownloadItem::new(
             Gid::new(gid).expect("valid gid"),
             status,
@@ -1051,12 +1158,7 @@ mod tests {
             1024,
             512,
             0,
-            vec![DownloadFile::new(
-                format!("/tmp/{gid}.bin"),
-                2048,
-                1024,
-                true,
-            )],
+            vec![DownloadFile::new(path, 2048, 1024, true)],
         )
     }
 

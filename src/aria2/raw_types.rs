@@ -2,7 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::aria2::domain::{
-    DownloadFile, DownloadItem, DownloadStatus, Gid, GlobalStats, VersionInfo,
+    DownloadDetail, DownloadFile, DownloadItem, DownloadStatus, Gid, GlobalStats, TorrentDetail,
+    VersionInfo,
 };
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::RequestId;
@@ -27,12 +28,14 @@ enum JsonRpcResponse<T> {
 pub enum MulticallEntryKind {
     GlobalStats,
     DownloadItems,
+    SelectedDownloadDetail,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MulticallEntry {
     GlobalStats(GlobalStats),
     DownloadItems(Vec<DownloadItem>),
+    SelectedDownloadDetail(DownloadDetail),
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +83,24 @@ struct RawDownloadItem {
     download_speed: String,
     #[serde(rename = "uploadSpeed", default)]
     upload_speed: String,
+    #[serde(default)]
+    dir: String,
+    #[serde(default)]
+    connections: String,
+    #[serde(rename = "pieceLength", default)]
+    piece_length: String,
+    #[serde(rename = "numPieces", default)]
+    piece_count: String,
+    #[serde(rename = "errorCode", default)]
+    error_code: String,
+    #[serde(rename = "errorMessage", default)]
+    error_message: String,
+    #[serde(rename = "infoHash", default)]
+    info_hash: String,
+    #[serde(default)]
+    seeder: String,
+    #[serde(rename = "numSeeders", default)]
+    num_seeders: String,
     #[serde(default)]
     files: Vec<RawDownloadFile>,
 }
@@ -142,6 +163,18 @@ pub fn parse_download_items_response(
         .ok_or_else(|| ClientError::MalformedResponse("missing downloads result".to_owned()))?;
 
     raw_items.into_iter().map(parse_download_item).collect()
+}
+
+pub fn parse_download_detail_response(
+    body: &str,
+    expected_id: RequestId,
+) -> Result<DownloadDetail, ClientError> {
+    let envelope: JsonRpcEnvelope<RawDownloadItem> = parse_envelope(body, expected_id)?;
+    let raw = envelope.result.ok_or_else(|| {
+        ClientError::MalformedResponse("missing download detail result".to_owned())
+    })?;
+
+    parse_download_detail(raw)
 }
 
 pub fn parse_add_uri_response(body: &str, expected_id: RequestId) -> Result<Gid, ClientError> {
@@ -277,6 +310,13 @@ fn parse_multicall_entry(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(MulticallEntry::DownloadItems(items))
         }
+        MulticallEntryKind::SelectedDownloadDetail => {
+            let raw = serde_json::from_value::<RawDownloadItem>(value)
+                .map_err(|error| ClientError::MalformedResponse(error.to_string()))?;
+            Ok(MulticallEntry::SelectedDownloadDetail(
+                parse_download_detail(raw)?,
+            ))
+        }
     }
 }
 
@@ -298,6 +338,40 @@ fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError
         parse_optional_u64("uploadSpeed", &raw.upload_speed)?,
         files,
     ))
+}
+
+fn parse_download_detail(raw: RawDownloadItem) -> Result<DownloadDetail, ClientError> {
+    let directory = optional_string(&raw.dir);
+    let connections = parse_optional_u32("connections", &raw.connections)?;
+    let piece_length = parse_optional_u64("pieceLength", &raw.piece_length)?;
+    let piece_count = parse_optional_u64("numPieces", &raw.piece_count)?;
+    let error_code = optional_string(&raw.error_code);
+    let error_message = optional_string(&raw.error_message);
+    let torrent = parse_torrent_detail(&raw)?;
+    let item = parse_download_item(raw)?;
+    let mut detail = DownloadDetail::new(item);
+
+    detail.set_directory(directory);
+    detail.set_connections(connections);
+    detail.set_piece_length_bytes(piece_length);
+    detail.set_piece_count(piece_count);
+    detail.set_error_code(error_code);
+    detail.set_error_message(error_message);
+    detail.set_torrent(torrent);
+
+    Ok(detail)
+}
+
+fn parse_torrent_detail(raw: &RawDownloadItem) -> Result<Option<TorrentDetail>, ClientError> {
+    let info_hash = optional_string(&raw.info_hash);
+    let seeder = raw.seeder == "true";
+    let num_seeders = parse_optional_u32("numSeeders", &raw.num_seeders)?;
+
+    if info_hash.is_none() && !seeder && num_seeders == 0 {
+        return Ok(None);
+    }
+
+    Ok(Some(TorrentDetail::new(info_hash, seeder, num_seeders)))
 }
 
 fn parse_global_stats(raw: RawGlobalStats) -> Result<GlobalStats, ClientError> {
@@ -339,12 +413,28 @@ fn parse_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
     })
 }
 
+fn parse_optional_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
+    if value.is_empty() {
+        return Ok(0);
+    }
+
+    parse_u32(field, value)
+}
+
+fn optional_string(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        MulticallEntry, MulticallEntryKind, parse_add_uri_response, parse_download_items_response,
-        parse_get_version_response, parse_gid_command_response, parse_global_stats_response,
-        parse_multicall_response, parse_ok_response,
+        MulticallEntry, MulticallEntryKind, parse_add_uri_response, parse_download_detail_response,
+        parse_download_items_response, parse_get_version_response, parse_gid_command_response,
+        parse_global_stats_response, parse_multicall_response, parse_ok_response,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::methods::RequestId;
@@ -454,6 +544,38 @@ mod tests {
     }
 
     #[test]
+    fn parses_selected_download_detail_with_torrent_metadata() {
+        let detail = parse_download_detail_response(
+            r#"{"jsonrpc":"2.0","id":22,"result":{"gid":"abc123","status":"active","totalLength":"4096","completedLength":"2048","downloadSpeed":"1024","uploadSpeed":"128","dir":"/downloads","connections":"4","pieceLength":"262144","numPieces":"32","errorCode":"","errorMessage":"","infoHash":"0123456789abcdef","seeder":"true","numSeeders":"12","files":[{"path":"/downloads/movie.mkv","length":"4096","completedLength":"2048","selected":"true"}]}}"#,
+            RequestId::new(22),
+        )
+        .expect("valid detail response");
+
+        assert_eq!(detail.item().gid().as_str(), "abc123");
+        assert_eq!(detail.directory(), Some("/downloads"));
+        assert_eq!(detail.connections(), 4);
+        assert_eq!(detail.piece_length_bytes(), 262_144);
+        assert_eq!(detail.piece_count(), 32);
+        let torrent = detail.torrent().expect("torrent metadata");
+        assert_eq!(torrent.info_hash(), Some("0123456789abcdef"));
+        assert!(torrent.seeder());
+        assert_eq!(torrent.num_seeders(), 12);
+    }
+
+    #[test]
+    fn parses_selected_download_detail_without_optional_metadata() {
+        let detail = parse_download_detail_response(
+            r#"{"jsonrpc":"2.0","id":23,"result":{"gid":"abc123","status":"waiting","totalLength":"0","completedLength":"0","files":[]}}"#,
+            RequestId::new(23),
+        )
+        .expect("minimal detail response");
+
+        assert_eq!(detail.directory(), None);
+        assert_eq!(detail.connections(), 0);
+        assert_eq!(detail.torrent(), None);
+    }
+
+    #[test]
     fn keeps_unknown_download_status_as_typed_domain_value() {
         let items = parse_download_items_response(
             r#"{"jsonrpc":"2.0","id":21,"result":[{"gid":"abc123","status":"mystery","totalLength":"0","completedLength":"0","files":[]}]}"#,
@@ -535,6 +657,22 @@ mod tests {
                 MulticallEntry::GlobalStats(_),
                 MulticallEntry::DownloadItems(_)
             ]
+        ));
+    }
+
+    #[test]
+    fn parses_selected_download_detail_multicall_entry() {
+        let entries = parse_multicall_response(
+            r#"{"jsonrpc":"2.0","id":51,"result":[[{"gid":"abc123","status":"active","totalLength":"10","completedLength":"5","connections":"2","files":[]}]]}"#,
+            RequestId::new(51),
+            &[MulticallEntryKind::SelectedDownloadDetail],
+        )
+        .expect("valid selected detail multicall");
+
+        assert!(matches!(
+            &entries[0],
+            MulticallEntry::SelectedDownloadDetail(detail)
+                if detail.item().gid().as_str() == "abc123" && detail.connections() == 2
         ));
     }
 

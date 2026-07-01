@@ -1,17 +1,23 @@
 use serde_json::to_string;
 
-use crate::aria2::domain::{DownloadSnapshot, Gid, GlobalStats, VersionInfo};
+#[cfg(test)]
+use crate::aria2::domain::GlobalStats;
+use crate::aria2::domain::{DownloadSnapshot, Gid, VersionInfo};
 use crate::aria2::errors::ClientError;
+#[cfg(test)]
+use crate::aria2::methods::build_get_global_stat_request;
 use crate::aria2::methods::{
     JsonRpcRequest, RequestId, build_add_uri_request, build_get_global_stat_call,
-    build_get_global_stat_request, build_get_version_request, build_multicall_request,
-    build_pause_request, build_purge_stopped_request, build_remove_request, build_tell_active_call,
-    build_tell_stopped_call, build_tell_waiting_call, build_unpause_request,
+    build_get_version_request, build_multicall_request, build_pause_request,
+    build_purge_stopped_request, build_remove_request, build_tell_active_call,
+    build_tell_status_call, build_tell_stopped_call, build_tell_waiting_call,
+    build_unpause_request,
 };
+#[cfg(test)]
+use crate::aria2::raw_types::parse_global_stats_response;
 use crate::aria2::raw_types::{
     MulticallEntry, MulticallEntryKind, parse_add_uri_response, parse_get_version_response,
-    parse_gid_command_response, parse_global_stats_response, parse_multicall_response,
-    parse_ok_response,
+    parse_gid_command_response, parse_multicall_response, parse_ok_response,
 };
 use crate::config::{RpcAuth, Settings};
 
@@ -249,6 +255,10 @@ impl Aria2Client {
             calls.push(build_tell_stopped_call(secret, request.stopped_limit()));
             entry_kinds.push(MulticallEntryKind::DownloadItems);
         }
+        if let Some(gid) = request.selected_gid() {
+            calls.push(build_tell_status_call(secret, gid));
+            entry_kinds.push(MulticallEntryKind::SelectedDownloadDetail);
+        }
 
         (
             build_multicall_request(SNAPSHOT_MULTICALL_REQUEST_ID, calls),
@@ -427,11 +437,13 @@ fn parse_snapshot_multicall(
     let entries = parse_multicall_response(body, SNAPSHOT_MULTICALL_REQUEST_ID, entry_kinds)?;
     let mut global_stats = None;
     let mut items = Vec::new();
+    let mut selected_detail = None;
 
     for entry in entries {
         match entry {
             MulticallEntry::GlobalStats(stats) => global_stats = Some(stats),
             MulticallEntry::DownloadItems(mut download_items) => items.append(&mut download_items),
+            MulticallEntry::SelectedDownloadDetail(detail) => selected_detail = Some(detail),
         }
     }
 
@@ -439,7 +451,11 @@ fn parse_snapshot_multicall(
         ClientError::MalformedResponse("multicall snapshot missing global stats".to_owned())
     })?;
 
-    Ok(DownloadSnapshot::new(global_stats, items))
+    Ok(DownloadSnapshot::with_selected_detail(
+        global_stats,
+        items,
+        selected_detail,
+    ))
 }
 
 #[cfg(test)]
@@ -528,8 +544,9 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        DEFAULT_STOPPED_REFRESH_LIMIT, HttpPost, HttpResponse, Transport, add_uri_with_transport,
-        fetch_download_snapshot_with_transport, fetch_global_stats_with_transport,
+        BatchRefreshRequest, DEFAULT_STOPPED_REFRESH_LIMIT, HttpPost, HttpResponse, Transport,
+        add_uri_with_transport, fetch_download_snapshot_with_transport,
+        fetch_download_snapshot_with_transport_and_request, fetch_global_stats_with_transport,
         pause_with_transport, purge_stopped_with_transport, remove_with_transport,
         test_connection_with_transport, unpause_with_transport,
     };
@@ -678,6 +695,36 @@ mod tests {
         assert_eq!(calls[3]["params"][1], DEFAULT_STOPPED_REFRESH_LIMIT);
         assert_eq!(calls[3]["params"][2][0], "gid");
         assert_eq!(calls[3]["params"][2][6], "files");
+    }
+
+    #[test]
+    fn download_snapshot_fetches_selected_detail_when_requested() {
+        let settings = Settings::default();
+        let mut request = BatchRefreshRequest::stats_only();
+        request.set_selected_gid(Some(Gid::new("selected-gid").expect("valid gid")));
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":11,"result":[[{"downloadSpeed":"1536","uploadSpeed":"512","numActive":"1","numWaiting":"1","numStopped":"1"}],[{"gid":"selected-gid","status":"active","totalLength":"2000","completedLength":"1000","downloadSpeed":"500","uploadSpeed":"0","dir":"/downloads","connections":"3","infoHash":"abcdef","numSeeders":"9","files":[]}]]}"#,
+        )));
+
+        let snapshot =
+            fetch_download_snapshot_with_transport_and_request(&settings, &transport, &request)
+                .expect("snapshot should parse selected detail");
+
+        let detail = snapshot.selected_detail().expect("selected detail");
+        assert_eq!(detail.item().gid().as_str(), "selected-gid");
+        assert_eq!(detail.directory(), Some("/downloads"));
+        assert_eq!(detail.connections(), 3);
+        assert_eq!(
+            detail.torrent().and_then(|torrent| torrent.info_hash()),
+            Some("abcdef")
+        );
+
+        let posts = transport.posts.borrow();
+        let body: Value = serde_json::from_str(posts[0].body()).expect("request body is JSON");
+        let calls = &body["params"][0];
+        assert_eq!(calls[1]["methodName"], "aria2.tellStatus");
+        assert_eq!(calls[1]["params"][0], "selected-gid");
+        assert_eq!(calls[1]["params"][1][15], "files");
     }
 
     #[test]

@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use crate::app::scheduler::{RefreshDirtyFlags, RefreshScheduler, RefreshTrigger};
 use crate::app::{ActionMessage, ActionTarget, RefreshInvalidation};
 use crate::aria2::client::{BatchRefreshRequest, ConnectionTest};
-use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats};
+use crate::aria2::domain::{
+    DownloadDetail, DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats,
+};
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::config::{
@@ -99,8 +101,10 @@ pub struct DownloadRowView {
     name: String,
     gid: String,
     gid_value: Gid,
+    file_icon: FileIcon,
     status: String,
     progress: String,
+    progress_per_mille: u16,
     speed: String,
     can_pause: bool,
     can_unpause: bool,
@@ -123,12 +127,20 @@ impl DownloadRowView {
         self.gid_value.clone()
     }
 
+    pub fn file_icon(&self) -> FileIcon {
+        self.file_icon
+    }
+
     pub fn status(&self) -> &str {
         &self.status
     }
 
     pub fn progress(&self) -> &str {
         &self.progress
+    }
+
+    pub fn progress_ratio(&self) -> f32 {
+        f32::from(self.progress_per_mille) / 1000.0
     }
 
     pub fn speed(&self) -> &str {
@@ -165,9 +177,12 @@ pub struct DownloadDetailView {
     name: String,
     gid: String,
     status: String,
+    directory: Option<String>,
     progress: String,
     speeds: String,
     totals: String,
+    technical: Vec<String>,
+    torrent: Vec<String>,
     files: Vec<String>,
     error: Option<String>,
 }
@@ -185,6 +200,10 @@ impl DownloadDetailView {
         &self.status
     }
 
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
     pub fn progress(&self) -> &str {
         &self.progress
     }
@@ -197,6 +216,14 @@ impl DownloadDetailView {
         &self.totals
     }
 
+    pub fn technical(&self) -> &[String] {
+        &self.technical
+    }
+
+    pub fn torrent(&self) -> &[String] {
+        &self.torrent
+    }
+
     pub fn files(&self) -> &[String] {
         &self.files
     }
@@ -204,6 +231,18 @@ impl DownloadDetailView {
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileIcon {
+    Archive,
+    Audio,
+    Document,
+    Executable,
+    File,
+    Image,
+    Torrent,
+    Video,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +255,7 @@ pub struct State {
     scheduler: RefreshScheduler,
     actions: ActionsState,
     selection: SelectionState,
+    viewport_width: u32,
 }
 
 impl State {
@@ -290,6 +330,7 @@ impl State {
                 feedback: None,
             },
             selection: SelectionState { selected_gid: None },
+            viewport_width: 1280,
         }
     }
 
@@ -440,15 +481,7 @@ impl State {
         self.downloads
             .items_by_gid
             .get(selected_gid)
-            .map(|record| download_detail_view(&record.item))
-    }
-
-    pub fn detail_empty_text(&self) -> &'static str {
-        if self.downloads.is_empty() {
-            "No download selected."
-        } else {
-            "Select a download to inspect details."
-        }
+            .map(download_detail_view)
     }
 
     pub fn can_purge_stopped(&self) -> bool {
@@ -485,6 +518,14 @@ impl State {
 
     pub fn is_connected(&self) -> bool {
         matches!(self.connection.status, ConnectionStatus::Connected)
+    }
+
+    pub fn is_compact_layout(&self) -> bool {
+        self.viewport_width < 900
+    }
+
+    pub(super) fn set_viewport_width(&mut self, width: u32) {
+        self.viewport_width = width;
     }
 
     pub(super) fn polling_interval_seconds(&self) -> u16 {
@@ -721,10 +762,17 @@ impl State {
         self.persist_config(None, None);
     }
 
-    pub(super) fn select_download(&mut self, gid: Gid) {
+    pub(super) fn select_download(&mut self, gid: Gid) -> bool {
         if self.downloads.items_by_gid.contains_key(&gid) {
             self.selection.selected_gid = Some(gid);
+            self.scheduler.mark_dirty(RefreshDirtyFlags {
+                selected: true,
+                ..RefreshDirtyFlags::default()
+            });
+            return true;
         }
+
+        false
     }
 
     pub(super) fn clear_selection(&mut self) {
@@ -1095,7 +1143,7 @@ impl State {
         request: BatchRefreshRequest,
         snapshot: DownloadSnapshot,
     ) {
-        let (global_stats, items) = snapshot.into_parts();
+        let (global_stats, items, selected_detail) = snapshot.into_parts();
         self.stats.global = Some(global_stats);
         self.downloads.merge_tick += 1;
         let merge_tick = self.downloads.merge_tick;
@@ -1121,6 +1169,10 @@ impl State {
             }
         }
 
+        if let Some(detail) = selected_detail {
+            self.merge_selected_detail(detail, merge_tick);
+        }
+
         if request.include_active() {
             self.downloads.active_order = active_order;
         }
@@ -1131,6 +1183,27 @@ impl State {
             self.downloads.stopped_order = stopped_order;
         }
         self.downloads.retain_ordered_records();
+    }
+
+    fn merge_selected_detail(&mut self, detail: DownloadDetail, merge_tick: u64) {
+        let gid = detail.item().gid().clone();
+        let item = detail.item().clone();
+
+        if let Some(record) = self.downloads.items_by_gid.get_mut(&gid) {
+            record.merge(item, merge_tick);
+            record.detail = Some(detail);
+            return;
+        }
+
+        match DownloadSection::from_status(item.status()) {
+            DownloadSection::Active => self.downloads.active_order.push(gid.clone()),
+            DownloadSection::Waiting => self.downloads.waiting_order.push(gid.clone()),
+            DownloadSection::Stopped => self.downloads.stopped_order.push(gid.clone()),
+        }
+
+        let mut record = DownloadRecord::new(item, merge_tick);
+        record.detail = Some(detail);
+        self.downloads.items_by_gid.insert(gid, record);
     }
 
     fn clear_snapshot(&mut self) {
@@ -1281,6 +1354,7 @@ impl DownloadsState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DownloadRecord {
     item: DownloadItem,
+    detail: Option<DownloadDetail>,
     revision: u64,
     last_seen_at: u64,
     last_changed_at: u64,
@@ -1291,6 +1365,7 @@ impl DownloadRecord {
     fn new(item: DownloadItem, merge_tick: u64) -> Self {
         Self {
             item,
+            detail: None,
             revision: 1,
             last_seen_at: merge_tick,
             last_changed_at: merge_tick,
@@ -1397,8 +1472,10 @@ fn download_row_view(
         name: download_name(item),
         gid: item.gid().as_str().to_owned(),
         gid_value: item.gid().clone(),
+        file_icon: file_icon_for_item(item),
         status: item.status().display_label().to_owned(),
         progress: progress_text(item),
+        progress_per_mille: progress_per_mille(item),
         speed: speed_text(item),
         can_pause: action_available && matches!(item.status(), DownloadStatus::Active),
         can_unpause: action_available
@@ -1417,11 +1494,51 @@ fn download_row_view(
     }
 }
 
-fn download_detail_view(item: &DownloadItem) -> DownloadDetailView {
+fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
+    let item = &record.item;
+    let detail = record.detail.as_ref();
+    let mut technical = Vec::new();
+    let mut torrent = Vec::new();
+
+    if let Some(detail) = detail {
+        if detail.connections() > 0 {
+            technical.push(format!("Connections {}", detail.connections()));
+        }
+        if detail.piece_length_bytes() > 0 {
+            technical.push(format!(
+                "Piece length {}",
+                format_bytes(detail.piece_length_bytes())
+            ));
+        }
+        if detail.piece_count() > 0 {
+            technical.push(format!("Pieces {}", detail.piece_count()));
+        }
+        if let Some(error_code) = detail.error_code() {
+            technical.push(format!("aria2 error code {error_code}"));
+        }
+        if let Some(error_message) = detail.error_message() {
+            technical.push(format!("aria2 error {error_message}"));
+        }
+        if let Some(torrent_detail) = detail.torrent() {
+            if let Some(info_hash) = torrent_detail.info_hash() {
+                torrent.push(format!("Info hash {info_hash}"));
+            }
+            torrent.push(if torrent_detail.seeder() {
+                "Seeding yes".to_owned()
+            } else {
+                "Seeding no".to_owned()
+            });
+            torrent.push(format!("Seeders {}", torrent_detail.num_seeders()));
+        }
+    }
+
     DownloadDetailView {
         name: download_name(item),
         gid: item.gid().as_str().to_owned(),
         status: item.status().display_label().to_owned(),
+        directory: detail
+            .and_then(DownloadDetail::directory)
+            .map(str::to_owned),
         progress: progress_text(item),
         speeds: speed_text(item),
         totals: format!(
@@ -1449,6 +1566,8 @@ fn download_detail_view(item: &DownloadItem) -> DownloadDetailView {
                 )
             })
             .collect(),
+        technical,
+        torrent,
         error: item.command_error().map(str::to_owned),
     }
 }
@@ -1469,8 +1588,62 @@ fn download_name(item: &DownloadItem) -> String {
         .unwrap_or_else(|| item.gid().as_str().to_owned())
 }
 
+fn file_icon_for_item(item: &DownloadItem) -> FileIcon {
+    let path = item
+        .files()
+        .iter()
+        .find(|file| file.selected())
+        .or_else(|| item.files().first())
+        .map(DownloadFile::path)
+        .unwrap_or_default();
+    let lower = path.to_ascii_lowercase();
+
+    if lower.starts_with("magnet:") || matches_extension(&lower, &["torrent"]) {
+        return FileIcon::Torrent;
+    }
+    if matches_extension(&lower, &["zip", "rar", "7z", "tar", "gz", "bz2", "xz"]) {
+        return FileIcon::Archive;
+    }
+    if matches_extension(&lower, &["mp4", "mkv", "webm", "avi", "mov"]) {
+        return FileIcon::Video;
+    }
+    if matches_extension(&lower, &["mp3", "flac", "wav", "ogg", "m4a"]) {
+        return FileIcon::Audio;
+    }
+    if matches_extension(&lower, &["png", "jpg", "jpeg", "gif", "webp", "svg"]) {
+        return FileIcon::Image;
+    }
+    if matches_extension(
+        &lower,
+        &[
+            "pdf", "txt", "md", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+        ],
+    ) {
+        return FileIcon::Document;
+    }
+    if matches_extension(&lower, &["exe", "msi", "appimage", "deb", "rpm", "apk"]) {
+        return FileIcon::Executable;
+    }
+
+    FileIcon::File
+}
+
+fn matches_extension(path: &str, extensions: &[&str]) -> bool {
+    path.rsplit_once('.')
+        .is_some_and(|(_, extension)| extensions.contains(&extension))
+}
+
 fn progress_text(item: &DownloadItem) -> String {
     format_progress(item.completed_length_bytes(), item.total_length_bytes())
+}
+
+fn progress_per_mille(item: &DownloadItem) -> u16 {
+    if item.total_length_bytes() == 0 {
+        return 0;
+    }
+
+    let ratio = item.completed_length_bytes() as f64 / item.total_length_bytes() as f64;
+    (ratio * 1000.0).clamp(0.0, 1000.0) as u16
 }
 
 fn speed_text(item: &DownloadItem) -> String {

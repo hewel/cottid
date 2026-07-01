@@ -1,0 +1,74 @@
+use iced::widget::svg;
+use iced::{Color, Element, Length};
+
+use crate::app::{FileIcon, Message};
+
+const ICON_ROOT: &str = "assets/icons/phosphor/regular";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Icon {
+    Add,
+    Archive,
+    Audio,
+    Back,
+    Clear,
+    Document,
+    Error,
+    Executable,
+    File,
+    Image,
+    Pause,
+    Play,
+    Purge,
+    Refresh,
+    Settings,
+    Torrent,
+    Video,
+}
+
+impl Icon {
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::Add => "plus.svg",
+            Self::Archive => "archive.svg",
+            Self::Audio => "file-audio.svg",
+            Self::Back => "arrow-left.svg",
+            Self::Clear => "x.svg",
+            Self::Document => "file-text.svg",
+            Self::Error => "warning-circle.svg",
+            Self::Executable => "file-code.svg",
+            Self::File => "file.svg",
+            Self::Image => "file-image.svg",
+            Self::Pause => "pause.svg",
+            Self::Play => "play.svg",
+            Self::Purge => "broom.svg",
+            Self::Refresh => "arrows-clockwise.svg",
+            Self::Settings => "gear.svg",
+            Self::Torrent => "cloud-arrow-down.svg",
+            Self::Video => "file-video.svg",
+        }
+    }
+}
+
+impl From<FileIcon> for Icon {
+    fn from(value: FileIcon) -> Self {
+        match value {
+            FileIcon::Archive => Self::Archive,
+            FileIcon::Audio => Self::Audio,
+            FileIcon::Document => Self::Document,
+            FileIcon::Executable => Self::Executable,
+            FileIcon::File => Self::File,
+            FileIcon::Image => Self::Image,
+            FileIcon::Torrent => Self::Torrent,
+            FileIcon::Video => Self::Video,
+        }
+    }
+}
+
+pub fn icon(icon: Icon, size: u16, color: Color) -> Element<'static, Message> {
+    svg::Svg::from_path(format!("{ICON_ROOT}/{}", icon.file_name()))
+        .width(Length::Fixed(f32::from(size)))
+        .height(Length::Fixed(f32::from(size)))
+        .style(move |_theme, _status| svg::Style { color: Some(color) })
+        .into()
+}

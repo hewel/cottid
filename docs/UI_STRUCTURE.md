@@ -19,53 +19,46 @@ or depend on raw aria2 JSON-RPC DTOs.
 
 Use a stable desktop shell:
 
-- Top toolbar.
+- Full-navigation left sidebar.
 - Main content row.
-- Bottom status bar.
+- Bottom status strip.
 - Overlay layer for add/settings/error dialogs.
 
 The main content row contains:
 
-- A narrow sidebar or filter-tabs area.
-- A central download list.
-- An optional right-side detail panel for the selected download.
+- A left sidebar with filters, counts, global commands, and connection context.
+- A central compact card list with a contextual list header.
+- A right-side detail drawer only when a download is selected.
 
 Offline, empty, loading, and stale states should appear inside the main content
 area instead of forcing separate app layouts.
 
-## Toolbar
+When the window is narrow, the sidebar collapses first. If a detail is selected
+in compact layout, the detail view replaces the list and exposes a clear/back
+control.
 
-The toolbar shows current app and daemon context.
+## Sidebar
 
 MVP content:
 
 - App title or active endpoint label.
 - Connection indicator.
-- Global download speed.
-- Global upload speed.
-- Refresh state.
+- Status filters with counts.
 - Add URI/magnet action.
 - Manual refresh action.
-- Pause selected action.
-- Unpause selected action.
-- Remove selected action.
 - Purge stopped action.
 - Settings action.
 
-Toolbar actions should be disabled or visually softened when disconnected, when
-no task is selected, or when a relevant operation is already pending.
+Sidebar actions should be disabled or visually softened when disconnected or
+when a relevant operation is already pending.
 
-Future toolbar space:
+Future sidebar space:
 
 - Profile switcher.
 - Speed profile selector.
 - Queue controls.
 - Daemon start/stop controls.
 - Tray-related status affordances.
-
-## Sidebar Or Filter Tabs
-
-MVP should use simple filter tabs or a narrow sidebar with counts.
 
 Filters:
 
@@ -80,6 +73,16 @@ Filter selection belongs in `UiState`. Counts come from `DownloadsState`.
 
 Do not include queue management, profile management, or torrent-specific
 navigation in MVP.
+
+## List Header
+
+The central list header shows only contextual list information:
+
+- Current filter.
+- Active/waiting/stopped counts.
+- Refresh state.
+
+Do not add search or sorting in this slice.
 
 ## Download List
 
@@ -101,15 +104,17 @@ The list must not:
 - Trigger RPC calls directly.
 - Own connection or persistence state.
 
-## Task Row
+## Task Card
 
-Each task row displays one `DownloadItem` summary.
+Each task card displays one `DownloadItem` summary.
 
 MVP fields:
 
+- Curated file-type icon.
 - Display name or path summary.
 - Status.
-- Progress.
+- Thin progress bar.
+- Percent/completed/total progress text.
 - Completed and total size.
 - Download speed.
 - Upload speed when relevant.
@@ -123,11 +128,22 @@ MVP row actions:
 - Unpause.
 - Remove.
 
-Task rows should emit messages with `Gid`; parent update logic decides whether
+Task cards should emit messages with `Gid`; parent update logic decides whether
 to run RPC tasks. Do not expose raw aria2 status strings or raw RPC errors in
-the row.
+the card.
 
-Future row additions:
+The first file-type icon mapping is intentionally small:
+
+- Archive.
+- Video.
+- Audio.
+- Image.
+- Document.
+- Executable.
+- Torrent or magnet.
+- Generic file fallback.
+
+Future card additions:
 
 - Queue position.
 - Seeding indicator.
@@ -151,7 +167,8 @@ picker, Metalink picker, batch input, or advanced aria2 options yet.
 
 ## Detail Panel
 
-The detail panel shows information for the selected `DownloadItem`.
+The detail panel shows information for the selected download. It renders only
+when a download is selected.
 
 MVP content:
 
@@ -163,17 +180,19 @@ MVP content:
 - Completed, uploaded, and total bytes.
 - File summaries.
 - Basic error details.
+- Operational metadata from selected `tellStatus`, such as directory,
+  connections, piece length, piece count, and aria2 error code/message.
+- Display-only torrent metadata when aria2 returns it, such as info hash,
+  seeding flag, and seeder count.
 
-When nothing is selected, show a compact empty-selection state. When the
+When nothing is selected, the right detail drawer is not rendered. When the
 selected download disappears, clear or update the selection through
 `DownloadsState` logic.
 
 Future detail sections:
 
-- Torrent file list and selected files.
 - Peer list.
 - Trackers.
-- Piece information.
 - Metalink source details.
 - Daemon/request diagnostics.
 
@@ -182,7 +201,7 @@ payloads.
 
 ## Settings Page
 
-Use a modal or side panel opened from the toolbar.
+Use a modal opened from the sidebar.
 
 MVP settings:
 
@@ -205,7 +224,7 @@ settings in MVP.
 
 ## Status Bar
 
-The status bar remains visible across the main shell.
+The bottom status strip remains visible across the main shell.
 
 MVP content:
 
@@ -276,6 +295,10 @@ never create tasks.
 - UI remains useful when aria2 is unreachable or refresh fails.
 
 ## Future UI Space
+
+The current UI uses a light, neutral premium desktop palette with blue primary
+actions and standard warning/error colors. Phosphor regular SVG icons are kept
+as a curated repo-local asset set and rendered through a typed icon component.
 
 Future WebSocket live updates should feed the same UI state as polling. The UI
 should not care whether updates came from polling or notifications.

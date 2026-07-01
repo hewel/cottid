@@ -116,6 +116,35 @@ impl DownloadFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TorrentDetail {
+    info_hash: Option<String>,
+    seeder: bool,
+    num_seeders: u32,
+}
+
+impl TorrentDetail {
+    pub fn new(info_hash: Option<String>, seeder: bool, num_seeders: u32) -> Self {
+        Self {
+            info_hash,
+            seeder,
+            num_seeders,
+        }
+    }
+
+    pub fn info_hash(&self) -> Option<&str> {
+        self.info_hash.as_deref()
+    }
+
+    pub fn seeder(&self) -> bool {
+        self.seeder
+    }
+
+    pub fn num_seeders(&self) -> u32 {
+        self.num_seeders
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadItem {
     gid: Gid,
     status: DownloadStatus,
@@ -187,9 +216,97 @@ impl DownloadItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadDetail {
+    item: DownloadItem,
+    directory: Option<String>,
+    connections: u32,
+    piece_length_bytes: u64,
+    piece_count: u64,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    torrent: Option<TorrentDetail>,
+}
+
+impl DownloadDetail {
+    pub fn new(item: DownloadItem) -> Self {
+        Self {
+            item,
+            directory: None,
+            connections: 0,
+            piece_length_bytes: 0,
+            piece_count: 0,
+            error_code: None,
+            error_message: None,
+            torrent: None,
+        }
+    }
+
+    pub fn item(&self) -> &DownloadItem {
+        &self.item
+    }
+
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
+    pub fn set_directory(&mut self, directory: Option<String>) {
+        self.directory = directory.filter(|value| !value.is_empty());
+    }
+
+    pub fn connections(&self) -> u32 {
+        self.connections
+    }
+
+    pub fn set_connections(&mut self, connections: u32) {
+        self.connections = connections;
+    }
+
+    pub fn piece_length_bytes(&self) -> u64 {
+        self.piece_length_bytes
+    }
+
+    pub fn set_piece_length_bytes(&mut self, piece_length_bytes: u64) {
+        self.piece_length_bytes = piece_length_bytes;
+    }
+
+    pub fn piece_count(&self) -> u64 {
+        self.piece_count
+    }
+
+    pub fn set_piece_count(&mut self, piece_count: u64) {
+        self.piece_count = piece_count;
+    }
+
+    pub fn error_code(&self) -> Option<&str> {
+        self.error_code.as_deref()
+    }
+
+    pub fn set_error_code(&mut self, error_code: Option<String>) {
+        self.error_code = error_code.filter(|value| !value.is_empty());
+    }
+
+    pub fn error_message(&self) -> Option<&str> {
+        self.error_message.as_deref()
+    }
+
+    pub fn set_error_message(&mut self, error_message: Option<String>) {
+        self.error_message = error_message.filter(|value| !value.is_empty());
+    }
+
+    pub fn torrent(&self) -> Option<&TorrentDetail> {
+        self.torrent.as_ref()
+    }
+
+    pub fn set_torrent(&mut self, torrent: Option<TorrentDetail>) {
+        self.torrent = torrent;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadSnapshot {
     global_stats: GlobalStats,
     items: Vec<DownloadItem>,
+    selected_detail: Option<DownloadDetail>,
 }
 
 impl DownloadSnapshot {
@@ -197,6 +314,19 @@ impl DownloadSnapshot {
         Self {
             global_stats,
             items,
+            selected_detail: None,
+        }
+    }
+
+    pub fn with_selected_detail(
+        global_stats: GlobalStats,
+        items: Vec<DownloadItem>,
+        selected_detail: Option<DownloadDetail>,
+    ) -> Self {
+        Self {
+            global_stats,
+            items,
+            selected_detail,
         }
     }
 
@@ -210,8 +340,12 @@ impl DownloadSnapshot {
         &self.items
     }
 
-    pub fn into_parts(self) -> (GlobalStats, Vec<DownloadItem>) {
-        (self.global_stats, self.items)
+    pub fn selected_detail(&self) -> Option<&DownloadDetail> {
+        self.selected_detail.as_ref()
+    }
+
+    pub fn into_parts(self) -> (GlobalStats, Vec<DownloadItem>, Option<DownloadDetail>) {
+        (self.global_stats, self.items, self.selected_detail)
     }
 }
 
