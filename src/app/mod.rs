@@ -15,10 +15,24 @@ pub use state::{
 };
 
 pub fn run() -> iced::Result {
-    iced::application(State::load, update, view)
+    iced::application(boot, update, view)
         .title("Cottid")
         .subscription(subscription)
         .run()
+}
+
+fn boot() -> (State, Task<Message>) {
+    boot_with(State::load())
+}
+
+fn boot_with(mut state: State) -> (State, Task<Message>) {
+    let task = update::start_connection_test(&mut state);
+    (state, task)
+}
+
+#[cfg(test)]
+fn boot_from_path(config_path: std::path::PathBuf) -> (State, Task<Message>) {
+    boot_with(State::load_from_path(config_path))
 }
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -57,6 +71,33 @@ mod tests {
 
         assert_eq!(state.connection_status(), ConnectionStatus::Offline);
         assert!(state.is_settings_ready());
+    }
+
+    #[test]
+    fn boot_starts_connection_test_from_loaded_config() {
+        let path = temp_config_path("boot-auto-connect");
+
+        let (state, _task) = super::boot_from_path(path);
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Testing);
+    }
+
+    #[test]
+    fn boot_connection_success_triggers_initial_refresh() {
+        let path = temp_config_path("boot-refresh");
+        let (mut state, _task) = super::boot_from_path(path);
+
+        let _task = super::update(
+            &mut state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 1,
+                settings: Settings::default(),
+                result: Ok(ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new()))),
+            }),
+        );
+
+        assert_eq!(state.connection_status(), ConnectionStatus::Connected);
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
     }
 
     #[test]

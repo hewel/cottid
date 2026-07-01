@@ -18,6 +18,25 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
     }
 }
 
+pub fn start_connection_test(state: &mut State) -> Task<Message> {
+    let Some((generation, settings)) = state.begin_connection_test() else {
+        return Task::none();
+    };
+
+    let settings_for_test = settings.clone();
+
+    Task::perform(
+        async move { crate::aria2::client::test_connection(settings_for_test).await },
+        move |result| {
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation,
+                settings,
+                result,
+            })
+        },
+    )
+}
+
 fn update_selection(state: &mut State, message: SelectionMessage) -> Task<Message> {
     match message {
         SelectionMessage::Select(gid) => {
@@ -158,24 +177,7 @@ fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
 
 fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Message> {
     match message {
-        ConnectionMessage::TestRequested => {
-            let Some((generation, settings)) = state.begin_connection_test() else {
-                return Task::none();
-            };
-
-            let settings_for_test = settings.clone();
-
-            Task::perform(
-                async move { crate::aria2::client::test_connection(settings_for_test).await },
-                move |result| {
-                    Message::Connection(ConnectionMessage::TestFinished {
-                        generation,
-                        settings,
-                        result,
-                    })
-                },
-            )
-        }
+        ConnectionMessage::TestRequested => start_connection_test(state),
         ConnectionMessage::TestFinished {
             generation,
             settings,
