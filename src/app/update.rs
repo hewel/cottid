@@ -246,8 +246,23 @@ fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Messag
             )
         }
         DownloadsMessage::Invalidated(invalidation) => {
-            state.invalidate_refresh(invalidation);
-            Task::none()
+            if !state.invalidate_refresh(invalidation) {
+                return Task::none();
+            }
+            let Some((generation, settings, request)) = state.begin_dirty_downloads_refresh()
+            else {
+                return Task::none();
+            };
+
+            Task::perform(
+                async move {
+                    crate::aria2::client::fetch_download_snapshot_with_request(settings, request)
+                        .await
+                },
+                move |result| {
+                    Message::Downloads(DownloadsMessage::RefreshFinished { generation, result })
+                },
+            )
         }
         DownloadsMessage::FilterChanged(filter) => {
             state.set_download_filter(filter);

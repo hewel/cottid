@@ -357,14 +357,57 @@ without adding raw aria2 structures to UI state.
 
 ### WebSocket Events
 
-Future WebSocket notifications should become typed domain events keyed by
-`Gid`. They should update the same `DownloadsState` paths used by polling.
+Future WebSocket notifications become typed invalidation events keyed by `Gid`.
+They do not directly replace or mutate canonical download state.
+
+Known notification methods:
+
+- `aria2.onDownloadStart`.
+- `aria2.onDownloadPause`.
+- `aria2.onDownloadStop`.
+- `aria2.onDownloadComplete`.
+- `aria2.onDownloadError`.
+- `aria2.onBtDownloadComplete`.
+
+Notification handling marks affected list sections dirty and lets the central
+refresh scheduler perform the next HTTP JSON-RPC refresh. BitTorrent completion
+stays distinct from normal completion because aria2 reports torrent download
+completion before seeding has ended.
+
+### RefreshInvalidation
+
+`RefreshInvalidation` is a scheduler input that says cached download data may
+be stale.
+
+Sources include:
+
+- User commands that changed aria2 state.
+- Polling cadence.
+- Future WebSocket notifications.
+
+Invalidation is not download data. It carries only enough information to choose
+which sections or selected detail should be refreshed.
 
 ### Managed Daemon State
 
 Future local `aria2c` process lifecycle belongs outside download domain models.
 Connection state may reference daemon availability, but downloads remain
 RPC-derived.
+
+### DaemonConfig
+
+`DaemonConfig` is reserved for optional future managed `aria2c` mode.
+
+Expected responsibilities:
+
+- Binary discovery.
+- Config and session path management.
+- PID tracking.
+- Graceful shutdown.
+- Restart.
+- Standard output and standard error diagnostics.
+
+The MVP does not use `DaemonConfig`; it connects to an existing aria2 daemon.
 
 ## Validation And Testing Targets
 

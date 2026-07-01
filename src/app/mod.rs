@@ -57,6 +57,7 @@ mod tests {
         DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats, VersionInfo,
     };
     use crate::aria2::errors::ClientError;
+    use crate::aria2::notifications::Aria2Notification;
     use crate::config::{RpcAuthDraft, Settings};
 
     use super::{
@@ -925,6 +926,61 @@ mod tests {
         );
 
         assert_eq!(state.filter_count(DownloadFilter::Complete), 1);
+    }
+
+    #[test]
+    fn download_start_notification_dirties_active_and_waiting_sections() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        state.invalidate_refresh(RefreshInvalidation::Aria2Notification(
+            Aria2Notification::DownloadStart(Gid::new("active-gid").expect("valid gid")),
+        ));
+        let (_, _, request) = state
+            .begin_dirty_downloads_refresh()
+            .expect("notification starts dirty refresh");
+
+        assert!(request.include_active());
+        assert!(request.include_waiting());
+        assert!(!request.include_stopped());
+    }
+
+    #[test]
+    fn complete_notification_refreshes_all_sections_and_selected_detail() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        state.select_download(Gid::new("active-gid").expect("valid gid"));
+        state.invalidate_refresh(RefreshInvalidation::Aria2Notification(
+            Aria2Notification::DownloadComplete(Gid::new("active-gid").expect("valid gid")),
+        ));
+        let (_, _, request) = state
+            .begin_dirty_downloads_refresh()
+            .expect("notification starts dirty refresh");
+
+        assert!(request.include_active());
+        assert!(request.include_waiting());
+        assert!(request.include_stopped());
+        assert_eq!(request.selected_gid().map(Gid::as_str), Some("active-gid"));
+    }
+
+    #[test]
+    fn unknown_notification_without_gid_does_not_start_dirty_refresh() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        assert!(
+            !state.invalidate_refresh(RefreshInvalidation::Aria2Notification(
+                Aria2Notification::Unknown {
+                    method: "aria2.onFutureEvent".to_owned(),
+                    gid: None,
+                },
+            ))
+        );
     }
 
     #[test]

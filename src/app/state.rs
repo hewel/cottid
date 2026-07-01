@@ -6,6 +6,7 @@ use crate::app::{ActionMessage, ActionTarget, RefreshInvalidation};
 use crate::aria2::client::{BatchRefreshRequest, ConnectionTest};
 use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats};
 use crate::aria2::errors::ClientError;
+use crate::aria2::notifications::Aria2Notification;
 use crate::config::{
     AuthStorage, ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft,
     SystemTokenStore, default_config_path, load_config, save_config_with_token_store,
@@ -644,7 +645,7 @@ impl State {
         }
     }
 
-    pub(super) fn invalidate_refresh(&mut self, invalidation: RefreshInvalidation) {
+    pub(super) fn invalidate_refresh(&mut self, invalidation: RefreshInvalidation) -> bool {
         let dirty = match invalidation {
             RefreshInvalidation::Active => RefreshDirtyFlags {
                 active: true,
@@ -668,9 +669,51 @@ impl State {
                 stopped: true,
                 selected: true,
             },
+            RefreshInvalidation::Aria2Notification(notification) => {
+                self.notification_dirty_flags(&notification)
+            }
         };
 
+        let has_dirty = dirty.active || dirty.waiting || dirty.stopped || dirty.selected;
+        if !has_dirty {
+            return false;
+        }
+
         self.scheduler.mark_dirty(dirty);
+        true
+    }
+
+    fn notification_dirty_flags(&self, notification: &Aria2Notification) -> RefreshDirtyFlags {
+        let selected = notification
+            .gid()
+            .is_some_and(|gid| self.selection.selected_gid.as_ref() == Some(gid));
+
+        match notification {
+            Aria2Notification::DownloadStart(_) | Aria2Notification::DownloadPause(_) => {
+                RefreshDirtyFlags {
+                    active: true,
+                    waiting: true,
+                    selected,
+                    ..RefreshDirtyFlags::default()
+                }
+            }
+            Aria2Notification::DownloadStop(_)
+            | Aria2Notification::DownloadComplete(_)
+            | Aria2Notification::DownloadError(_)
+            | Aria2Notification::BtDownloadComplete(_) => RefreshDirtyFlags {
+                active: true,
+                waiting: true,
+                stopped: true,
+                selected,
+            },
+            Aria2Notification::Unknown { gid: Some(_), .. } => RefreshDirtyFlags {
+                active: true,
+                waiting: true,
+                stopped: true,
+                selected,
+            },
+            Aria2Notification::Unknown { gid: None, .. } => RefreshDirtyFlags::default(),
+        }
     }
 
     pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {

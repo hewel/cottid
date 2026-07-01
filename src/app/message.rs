@@ -3,6 +3,7 @@ use crate::aria2::client::ConnectionTest;
 use crate::aria2::domain::DownloadSnapshot;
 use crate::aria2::domain::Gid;
 use crate::aria2::errors::ClientError;
+use crate::aria2::notifications::Aria2Notification;
 use crate::config::RpcAuthDraft;
 use crate::config::Settings;
 
@@ -78,13 +79,14 @@ pub enum DownloadsMessage {
 }
 
 #[expect(dead_code, reason = "reserved for future WebSocket invalidation")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefreshInvalidation {
     Active,
     Waiting,
     Stopped,
     Selected,
     All,
+    Aria2Notification(Aria2Notification),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

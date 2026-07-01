@@ -1,16 +1,17 @@
 use serde_json::to_string;
 
-use crate::aria2::domain::{DownloadItem, DownloadSnapshot, Gid, GlobalStats, VersionInfo};
+use crate::aria2::domain::{DownloadSnapshot, Gid, GlobalStats, VersionInfo};
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::{
-    JsonRpcRequest, RequestId, build_add_uri_request, build_get_global_stat_request,
-    build_get_version_request, build_pause_request, build_purge_stopped_request,
-    build_remove_request, build_tell_active_request, build_tell_stopped_request,
-    build_tell_waiting_request, build_unpause_request,
+    JsonRpcRequest, RequestId, build_add_uri_request, build_get_global_stat_call,
+    build_get_global_stat_request, build_get_version_request, build_multicall_request,
+    build_pause_request, build_purge_stopped_request, build_remove_request, build_tell_active_call,
+    build_tell_stopped_call, build_tell_waiting_call, build_unpause_request,
 };
 use crate::aria2::raw_types::{
-    parse_add_uri_response, parse_download_items_response, parse_get_version_response,
-    parse_gid_command_response, parse_global_stats_response, parse_ok_response,
+    MulticallEntry, MulticallEntryKind, parse_add_uri_response, parse_get_version_response,
+    parse_gid_command_response, parse_global_stats_response, parse_multicall_response,
+    parse_ok_response,
 };
 use crate::config::{RpcAuth, Settings};
 
@@ -18,14 +19,12 @@ pub const DEFAULT_STOPPED_REFRESH_LIMIT: u64 = 50;
 
 const CONNECTION_TEST_REQUEST_ID: RequestId = RequestId::new(1);
 const GLOBAL_STATS_REQUEST_ID: RequestId = RequestId::new(2);
-const TELL_ACTIVE_REQUEST_ID: RequestId = RequestId::new(3);
-const TELL_WAITING_REQUEST_ID: RequestId = RequestId::new(4);
-const TELL_STOPPED_REQUEST_ID: RequestId = RequestId::new(5);
 const ADD_URI_REQUEST_ID: RequestId = RequestId::new(6);
 const PAUSE_REQUEST_ID: RequestId = RequestId::new(7);
 const UNPAUSE_REQUEST_ID: RequestId = RequestId::new(8);
 const REMOVE_REQUEST_ID: RequestId = RequestId::new(9);
 const PURGE_STOPPED_REQUEST_ID: RequestId = RequestId::new(10);
+const SNAPSHOT_MULTICALL_REQUEST_ID: RequestId = RequestId::new(11);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -165,18 +164,110 @@ impl BatchRefreshRequest {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Aria2Client {
+    settings: Settings,
+}
+
+impl Aria2Client {
+    pub fn new(settings: Settings) -> Self {
+        Self { settings }
+    }
+
+    pub async fn test_connection(&self) -> Result<ConnectionTest, ClientError> {
+        let transport = ReqwestTransport::new();
+        let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, self.secret());
+        let body = send_rpc_request_async(&self.settings, &transport, request).await?;
+        let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
+
+        Ok(ConnectionTest { version })
+    }
+
+    pub async fn fetch_download_snapshot(
+        &self,
+        request: BatchRefreshRequest,
+    ) -> Result<DownloadSnapshot, ClientError> {
+        let transport = ReqwestTransport::new();
+        let (rpc_request, entry_kinds) = self.build_snapshot_multicall(&request);
+        let body = send_rpc_request_async(&self.settings, &transport, rpc_request).await?;
+
+        parse_snapshot_multicall(&body, &entry_kinds)
+    }
+
+    #[cfg(test)]
+    fn test_connection_with_transport(
+        &self,
+        transport: &impl Transport,
+    ) -> Result<ConnectionTest, ClientError> {
+        let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, self.secret());
+        let body = send_rpc_request(&self.settings, transport, request)?;
+        let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
+
+        Ok(ConnectionTest { version })
+    }
+
+    #[cfg(test)]
+    fn fetch_global_stats_with_transport(
+        &self,
+        transport: &impl Transport,
+    ) -> Result<GlobalStats, ClientError> {
+        let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, self.secret());
+        let body = send_rpc_request(&self.settings, transport, request)?;
+
+        parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
+    }
+
+    #[cfg(test)]
+    fn fetch_download_snapshot_with_transport(
+        &self,
+        transport: &impl Transport,
+        request: &BatchRefreshRequest,
+    ) -> Result<DownloadSnapshot, ClientError> {
+        let (rpc_request, entry_kinds) = self.build_snapshot_multicall(request);
+        let body = send_rpc_request(&self.settings, transport, rpc_request)?;
+
+        parse_snapshot_multicall(&body, &entry_kinds)
+    }
+
+    fn build_snapshot_multicall(
+        &self,
+        request: &BatchRefreshRequest,
+    ) -> (JsonRpcRequest, Vec<MulticallEntryKind>) {
+        let secret = self.secret();
+        let mut calls = vec![build_get_global_stat_call(secret)];
+        let mut entry_kinds = vec![MulticallEntryKind::GlobalStats];
+
+        if request.include_active {
+            calls.push(build_tell_active_call(secret));
+            entry_kinds.push(MulticallEntryKind::DownloadItems);
+        }
+        if request.include_waiting {
+            calls.push(build_tell_waiting_call(secret));
+            entry_kinds.push(MulticallEntryKind::DownloadItems);
+        }
+        if request.include_stopped {
+            calls.push(build_tell_stopped_call(secret, request.stopped_limit()));
+            entry_kinds.push(MulticallEntryKind::DownloadItems);
+        }
+
+        (
+            build_multicall_request(SNAPSHOT_MULTICALL_REQUEST_ID, calls),
+            entry_kinds,
+        )
+    }
+
+    fn secret(&self) -> Option<&crate::config::Secret> {
+        secret(&self.settings)
+    }
+}
+
 #[cfg(test)]
 pub trait Transport {
     fn post(&self, request: HttpPost) -> Result<HttpResponse, ClientError>;
 }
 
 pub async fn test_connection(settings: Settings) -> Result<ConnectionTest, ClientError> {
-    let transport = ReqwestTransport::new();
-    let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, secret(&settings));
-    let body = send_rpc_request_async(&settings, &transport, request).await?;
-    let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
-
-    Ok(ConnectionTest { version })
+    Aria2Client::new(settings).test_connection().await
 }
 
 #[expect(dead_code, reason = "kept as the default app-facing snapshot wrapper")]
@@ -188,49 +279,9 @@ pub async fn fetch_download_snapshot_with_request(
     settings: Settings,
     request: BatchRefreshRequest,
 ) -> Result<DownloadSnapshot, ClientError> {
-    let transport = ReqwestTransport::new();
-    let global_stats = fetch_global_stats_async(&settings, &transport).await?;
-    let secret = secret(&settings);
-
-    let active = if request.include_active {
-        fetch_download_items_async(
-            &settings,
-            &transport,
-            build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
-            TELL_ACTIVE_REQUEST_ID,
-        )
-        .await?
-    } else {
-        Vec::new()
-    };
-    let waiting = if request.include_waiting {
-        fetch_download_items_async(
-            &settings,
-            &transport,
-            build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
-            TELL_WAITING_REQUEST_ID,
-        )
-        .await?
-    } else {
-        Vec::new()
-    };
-    let stopped = if request.include_stopped {
-        fetch_download_items_async(
-            &settings,
-            &transport,
-            build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret, request.stopped_limit()),
-            TELL_STOPPED_REQUEST_ID,
-        )
-        .await?
-    } else {
-        Vec::new()
-    };
-
-    let mut items = active;
-    items.extend(waiting);
-    items.extend(stopped);
-
-    Ok(DownloadSnapshot::new(global_stats, items))
+    Aria2Client::new(settings)
+        .fetch_download_snapshot(request)
+        .await
 }
 
 pub async fn add_uri(settings: Settings, uri: String) -> Result<Gid, ClientError> {
@@ -278,11 +329,7 @@ pub fn test_connection_with_transport(
     settings: &Settings,
     transport: &impl Transport,
 ) -> Result<ConnectionTest, ClientError> {
-    let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, secret(settings));
-    let body = send_rpc_request(settings, transport, request)?;
-    let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
-
-    Ok(ConnectionTest { version })
+    Aria2Client::new(settings.clone()).test_connection_with_transport(transport)
 }
 
 #[cfg(test)]
@@ -290,10 +337,7 @@ pub fn fetch_global_stats_with_transport(
     settings: &Settings,
     transport: &impl Transport,
 ) -> Result<GlobalStats, ClientError> {
-    let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, secret(settings));
-    let body = send_rpc_request(settings, transport, request)?;
-
-    parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
+    Aria2Client::new(settings.clone()).fetch_global_stats_with_transport(transport)
 }
 
 #[cfg(test)]
@@ -314,45 +358,7 @@ pub fn fetch_download_snapshot_with_transport_and_request(
     transport: &impl Transport,
     request: &BatchRefreshRequest,
 ) -> Result<DownloadSnapshot, ClientError> {
-    let global_stats = fetch_global_stats_with_transport(settings, transport)?;
-    let secret = secret(settings);
-
-    let active = if request.include_active {
-        fetch_download_items(
-            settings,
-            transport,
-            build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
-            TELL_ACTIVE_REQUEST_ID,
-        )?
-    } else {
-        Vec::new()
-    };
-    let waiting = if request.include_waiting {
-        fetch_download_items(
-            settings,
-            transport,
-            build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
-            TELL_WAITING_REQUEST_ID,
-        )?
-    } else {
-        Vec::new()
-    };
-    let stopped = if request.include_stopped {
-        fetch_download_items(
-            settings,
-            transport,
-            build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret, request.stopped_limit()),
-            TELL_STOPPED_REQUEST_ID,
-        )?
-    } else {
-        Vec::new()
-    };
-
-    let mut items = active;
-    items.extend(waiting);
-    items.extend(stopped);
-
-    Ok(DownloadSnapshot::new(global_stats, items))
+    Aria2Client::new(settings.clone()).fetch_download_snapshot_with_transport(transport, request)
 }
 
 #[cfg(test)]
@@ -414,37 +420,26 @@ pub fn purge_stopped_with_transport(
     parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
 }
 
-#[cfg(test)]
-fn fetch_download_items(
-    settings: &Settings,
-    transport: &impl Transport,
-    request: JsonRpcRequest,
-    request_id: RequestId,
-) -> Result<Vec<DownloadItem>, ClientError> {
-    let body = send_rpc_request(settings, transport, request)?;
+fn parse_snapshot_multicall(
+    body: &str,
+    entry_kinds: &[MulticallEntryKind],
+) -> Result<DownloadSnapshot, ClientError> {
+    let entries = parse_multicall_response(body, SNAPSHOT_MULTICALL_REQUEST_ID, entry_kinds)?;
+    let mut global_stats = None;
+    let mut items = Vec::new();
 
-    parse_download_items_response(&body, request_id)
-}
+    for entry in entries {
+        match entry {
+            MulticallEntry::GlobalStats(stats) => global_stats = Some(stats),
+            MulticallEntry::DownloadItems(mut download_items) => items.append(&mut download_items),
+        }
+    }
 
-async fn fetch_global_stats_async(
-    settings: &Settings,
-    transport: &ReqwestTransport,
-) -> Result<GlobalStats, ClientError> {
-    let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, secret(settings));
-    let body = send_rpc_request_async(settings, transport, request).await?;
+    let global_stats = global_stats.ok_or_else(|| {
+        ClientError::MalformedResponse("multicall snapshot missing global stats".to_owned())
+    })?;
 
-    parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
-}
-
-async fn fetch_download_items_async(
-    settings: &Settings,
-    transport: &ReqwestTransport,
-    request: JsonRpcRequest,
-    request_id: RequestId,
-) -> Result<Vec<DownloadItem>, ClientError> {
-    let body = send_rpc_request_async(settings, transport, request).await?;
-
-    parse_download_items_response(&body, request_id)
+    Ok(DownloadSnapshot::new(global_stats, items))
 }
 
 #[cfg(test)]
@@ -555,13 +550,6 @@ mod tests {
                 posts: RefCell::new(Vec::new()),
             }
         }
-
-        fn returning_sequence(responses: Vec<Result<HttpResponse, ClientError>>) -> Self {
-            Self {
-                responses: RefCell::new(responses),
-                posts: RefCell::new(Vec::new()),
-            }
-        }
     }
 
     impl Transport for FakeTransport {
@@ -654,20 +642,9 @@ mod tests {
     #[test]
     fn download_snapshot_fetches_stats_active_waiting_and_stopped() {
         let settings = Settings::default();
-        let transport = FakeTransport::returning_sequence(vec![
-            Ok(HttpResponse::ok(
-                r#"{"jsonrpc":"2.0","id":2,"result":{"downloadSpeed":"1536","uploadSpeed":"512","numActive":"1","numWaiting":"1","numStopped":"1"}}"#,
-            )),
-            Ok(HttpResponse::ok(
-                r#"{"jsonrpc":"2.0","id":3,"result":[{"gid":"active-gid","status":"active","totalLength":"2000","completedLength":"1000","downloadSpeed":"500","uploadSpeed":"0","files":[]}]}"#,
-            )),
-            Ok(HttpResponse::ok(
-                r#"{"jsonrpc":"2.0","id":4,"result":[{"gid":"waiting-gid","status":"waiting","totalLength":"3000","completedLength":"0","files":[]}]}"#,
-            )),
-            Ok(HttpResponse::ok(
-                r#"{"jsonrpc":"2.0","id":5,"result":[{"gid":"stopped-gid","status":"complete","totalLength":"4000","completedLength":"4000","files":[]}]}"#,
-            )),
-        ]);
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":11,"result":[[{"downloadSpeed":"1536","uploadSpeed":"512","numActive":"1","numWaiting":"1","numStopped":"1"}],[[{"gid":"active-gid","status":"active","totalLength":"2000","completedLength":"1000","downloadSpeed":"500","uploadSpeed":"0","files":[]}]],[[{"gid":"waiting-gid","status":"waiting","totalLength":"3000","completedLength":"0","files":[]}]],[[{"gid":"stopped-gid","status":"complete","totalLength":"4000","completedLength":"4000","files":[]}]]]}"#,
+        )));
 
         let snapshot = fetch_download_snapshot_with_transport(&settings, &transport)
             .expect("snapshot should parse");
@@ -678,55 +655,41 @@ mod tests {
         assert_eq!(snapshot.items()[1].gid().as_str(), "waiting-gid");
         assert_eq!(snapshot.items()[2].gid().as_str(), "stopped-gid");
 
-        let methods = transport
-            .posts
-            .borrow()
-            .iter()
-            .map(|post| {
-                let body: Value = serde_json::from_str(post.body()).expect("request body is JSON");
-                body["method"].as_str().expect("method").to_owned()
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            methods,
-            [
-                "aria2.getGlobalStat",
-                "aria2.tellActive",
-                "aria2.tellWaiting",
-                "aria2.tellStopped"
-            ]
-        );
-
         let posts = transport.posts.borrow();
-        let active_body: Value = serde_json::from_str(posts[1].body()).expect("active request");
-        let waiting_body: Value = serde_json::from_str(posts[2].body()).expect("waiting request");
-        let stopped_body: Value = serde_json::from_str(posts[3].body()).expect("stopped request");
-        assert_eq!(active_body["params"][0][0], "gid");
-        assert_eq!(active_body["params"][0][6], "files");
-        assert_eq!(waiting_body["params"][0], 0);
-        assert_eq!(waiting_body["params"][1], 1000);
-        assert_eq!(waiting_body["params"][2][0], "gid");
-        assert_eq!(waiting_body["params"][2][6], "files");
-        assert_eq!(stopped_body["params"][0], 0);
-        assert_eq!(stopped_body["params"][1], DEFAULT_STOPPED_REFRESH_LIMIT);
-        assert_eq!(stopped_body["params"][2][0], "gid");
-        assert_eq!(stopped_body["params"][2][6], "files");
+        assert_eq!(posts.len(), 1);
+
+        let body: Value = serde_json::from_str(posts[0].body()).expect("request body is JSON");
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["method"], "system.multicall");
+        assert_eq!(body["id"], 11);
+
+        let calls = &body["params"][0];
+        assert_eq!(calls[0]["methodName"], "aria2.getGlobalStat");
+        assert_eq!(calls[1]["methodName"], "aria2.tellActive");
+        assert_eq!(calls[2]["methodName"], "aria2.tellWaiting");
+        assert_eq!(calls[3]["methodName"], "aria2.tellStopped");
+        assert_eq!(calls[1]["params"][0][0], "gid");
+        assert_eq!(calls[1]["params"][0][6], "files");
+        assert_eq!(calls[2]["params"][0], 0);
+        assert_eq!(calls[2]["params"][1], 1000);
+        assert_eq!(calls[2]["params"][2][0], "gid");
+        assert_eq!(calls[2]["params"][2][6], "files");
+        assert_eq!(calls[3]["params"][0], 0);
+        assert_eq!(calls[3]["params"][1], DEFAULT_STOPPED_REFRESH_LIMIT);
+        assert_eq!(calls[3]["params"][2][0], "gid");
+        assert_eq!(calls[3]["params"][2][6], "files");
     }
 
     #[test]
-    fn download_snapshot_returns_error_when_any_refresh_call_fails() {
+    fn download_snapshot_returns_error_when_any_multicall_entry_fails() {
         let settings = Settings::default();
-        let transport = FakeTransport::returning_sequence(vec![
-            Ok(HttpResponse::ok(
-                r#"{"jsonrpc":"2.0","id":2,"result":{"downloadSpeed":"0","uploadSpeed":"0","numActive":"0","numWaiting":"0","numStopped":"0"}}"#,
-            )),
-            Err(ClientError::Transport("connection refused".to_owned())),
-        ]);
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":11,"result":[[{"downloadSpeed":"0","uploadSpeed":"0","numActive":"0","numWaiting":"0","numStopped":"0"}],{"faultCode":1,"faultString":"bad nested call"},[[]],[[]]]}"#,
+        )));
 
         assert!(matches!(
             fetch_download_snapshot_with_transport(&settings, &transport),
-            Err(ClientError::Transport(_))
+            Err(ClientError::Rpc { code: 1, .. })
         ));
     }
 

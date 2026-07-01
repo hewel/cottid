@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::aria2::domain::{
     DownloadFile, DownloadItem, DownloadStatus, Gid, GlobalStats, VersionInfo,
@@ -14,6 +15,36 @@ struct JsonRpcEnvelope<T> {
     result: Option<T>,
     #[serde(default)]
     error: Option<RawRpcError>,
+}
+
+#[derive(Debug)]
+enum JsonRpcResponse<T> {
+    Success { id: RequestId, result: T },
+    Error { error: RawRpcError },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulticallEntryKind {
+    GlobalStats,
+    DownloadItems,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MulticallEntry {
+    GlobalStats(GlobalStats),
+    DownloadItems(Vec<DownloadItem>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawMulticallEntry {
+    Success(Vec<Value>),
+    Fault {
+        #[serde(rename = "faultCode")]
+        code: i64,
+        #[serde(rename = "faultString")]
+        message: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +176,53 @@ fn parse_envelope<T>(body: &str, expected_id: RequestId) -> Result<JsonRpcEnvelo
 where
     T: for<'de> Deserialize<'de>,
 {
+    let response = parse_response(body, expected_id)?;
+
+    match response {
+        JsonRpcResponse::Success { id, result } => Ok(JsonRpcEnvelope {
+            id,
+            result: Some(result),
+            error: None,
+        }),
+        JsonRpcResponse::Error { error, .. } => Err(ClientError::Rpc {
+            code: error.code,
+            message: error.message,
+        }),
+    }
+}
+
+pub fn parse_multicall_response(
+    body: &str,
+    expected_id: RequestId,
+    kinds: &[MulticallEntryKind],
+) -> Result<Vec<MulticallEntry>, ClientError> {
+    let entries = match parse_response::<Vec<RawMulticallEntry>>(body, expected_id)? {
+        JsonRpcResponse::Success { result, .. } => result,
+        JsonRpcResponse::Error { error, .. } => {
+            return Err(ClientError::Rpc {
+                code: error.code,
+                message: error.message,
+            });
+        }
+    };
+
+    if entries.len() != kinds.len() {
+        return Err(ClientError::MalformedResponse(
+            "multicall result count did not match request count".to_owned(),
+        ));
+    }
+
+    entries
+        .into_iter()
+        .zip(kinds.iter().copied())
+        .map(parse_multicall_entry)
+        .collect()
+}
+
+fn parse_response<T>(body: &str, expected_id: RequestId) -> Result<JsonRpcResponse<T>, ClientError>
+where
+    T: for<'de> Deserialize<'de>,
+{
     let envelope: JsonRpcEnvelope<T> = serde_json::from_str(body)
         .map_err(|error| ClientError::MalformedResponse(error.to_string()))?;
 
@@ -156,13 +234,50 @@ where
     }
 
     if let Some(error) = envelope.error {
-        return Err(ClientError::Rpc {
-            code: error.code,
-            message: error.message,
-        });
+        return Ok(JsonRpcResponse::Error { error });
     }
 
-    Ok(envelope)
+    let result = envelope
+        .result
+        .ok_or_else(|| ClientError::MalformedResponse("missing result".to_owned()))?;
+
+    Ok(JsonRpcResponse::Success {
+        id: envelope.id,
+        result,
+    })
+}
+
+fn parse_multicall_entry(
+    entry: (RawMulticallEntry, MulticallEntryKind),
+) -> Result<MulticallEntry, ClientError> {
+    let (entry, kind) = entry;
+    let values = match entry {
+        RawMulticallEntry::Success(values) => values,
+        RawMulticallEntry::Fault { code, message } => {
+            return Err(ClientError::Rpc { code, message });
+        }
+    };
+
+    let [value]: [Value; 1] = values.try_into().map_err(|_| {
+        ClientError::MalformedResponse("multicall entry must contain one result".to_owned())
+    })?;
+
+    match kind {
+        MulticallEntryKind::GlobalStats => {
+            let raw = serde_json::from_value::<RawGlobalStats>(value)
+                .map_err(|error| ClientError::MalformedResponse(error.to_string()))?;
+            Ok(MulticallEntry::GlobalStats(parse_global_stats(raw)?))
+        }
+        MulticallEntryKind::DownloadItems => {
+            let raw_items = serde_json::from_value::<Vec<RawDownloadItem>>(value)
+                .map_err(|error| ClientError::MalformedResponse(error.to_string()))?;
+            let items = raw_items
+                .into_iter()
+                .map(parse_download_item)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(MulticallEntry::DownloadItems(items))
+        }
+    }
 }
 
 fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError> {
@@ -182,6 +297,16 @@ fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError
         parse_optional_u64("downloadSpeed", &raw.download_speed)?,
         parse_optional_u64("uploadSpeed", &raw.upload_speed)?,
         files,
+    ))
+}
+
+fn parse_global_stats(raw: RawGlobalStats) -> Result<GlobalStats, ClientError> {
+    Ok(GlobalStats::new(
+        parse_u64("downloadSpeed", &raw.download_speed)?,
+        parse_u64("uploadSpeed", &raw.upload_speed)?,
+        parse_u32("numActive", &raw.active_downloads)?,
+        parse_u32("numWaiting", &raw.waiting_downloads)?,
+        parse_u32("numStopped", &raw.stopped_downloads)?,
     ))
 }
 
@@ -217,8 +342,9 @@ fn parse_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_add_uri_response, parse_download_items_response, parse_get_version_response,
-        parse_gid_command_response, parse_global_stats_response, parse_ok_response,
+        MulticallEntry, MulticallEntryKind, parse_add_uri_response, parse_download_items_response,
+        parse_get_version_response, parse_gid_command_response, parse_global_stats_response,
+        parse_multicall_response, parse_ok_response,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::methods::RequestId;
@@ -392,6 +518,48 @@ mod tests {
             RequestId::new(44),
         )
         .expect("valid OK response");
+    }
+
+    #[test]
+    fn parses_multicall_entries_into_typed_domain_values() {
+        let entries = parse_multicall_response(
+            r#"{"jsonrpc":"2.0","id":50,"result":[[{"downloadSpeed":"1536","uploadSpeed":"0","numActive":"1","numWaiting":"2","numStopped":"3"}],[[{"gid":"abc123","status":"active","totalLength":"10","completedLength":"5","files":[]}]]]}"#,
+            RequestId::new(50),
+            &[MulticallEntryKind::GlobalStats, MulticallEntryKind::DownloadItems],
+        )
+        .expect("valid multicall response");
+
+        assert!(matches!(
+            &entries[..],
+            [
+                MulticallEntry::GlobalStats(_),
+                MulticallEntry::DownloadItems(_)
+            ]
+        ));
+    }
+
+    #[test]
+    fn maps_multicall_nested_fault_to_rpc_error() {
+        let error = parse_multicall_response(
+            r#"{"jsonrpc":"2.0","id":50,"result":[{"faultCode":1,"faultString":"bad nested call"}]}"#,
+            RequestId::new(50),
+            &[MulticallEntryKind::GlobalStats],
+        )
+        .expect_err("nested fault should fail");
+
+        assert!(matches!(error, ClientError::Rpc { code: 1, .. }));
+    }
+
+    #[test]
+    fn rejects_multicall_result_count_mismatch() {
+        let error = parse_multicall_response(
+            r#"{"jsonrpc":"2.0","id":50,"result":[]}"#,
+            RequestId::new(50),
+            &[MulticallEntryKind::GlobalStats],
+        )
+        .expect_err("count mismatch should fail");
+
+        assert!(matches!(error, ClientError::MalformedResponse(_)));
     }
 
     #[test]

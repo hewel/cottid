@@ -350,12 +350,16 @@ approval.
 
 Future behavior:
 
-- Use the same JSON-RPC method signatures and response format as HTTP.
-- Parse aria2 notification frames into typed domain events.
+- Keep HTTP JSON-RPC polling as the source of truth.
+- Parse aria2 notification frames into typed invalidation events.
 - Key events by `Gid`.
-- Feed events into the same `DownloadsState` update path as polling.
+- Coalesce notification bursts before requesting a dirty refresh.
+- Feed invalidations into the same central refresh scheduler used by polling.
+- Never directly mutate canonical download state from WebSocket events.
 - Keep UI unaware of whether data came from polling or WebSocket.
-- Share raw DTO and domain conversion code where possible.
+- If RPC-over-WebSocket is added later, use request id correlation, connection
+  generation ids, pending request cleanup on reconnect, and stale response
+  discard.
 
 ## Dependency Approval Required
 

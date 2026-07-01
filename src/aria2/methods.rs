@@ -39,6 +39,23 @@ pub enum JsonRpcParam {
     String(String),
     Number(u64),
     StringList(Vec<String>),
+    MethodCalls(Vec<MulticallMethod>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MulticallMethod {
+    #[serde(rename = "methodName")]
+    method_name: &'static str,
+    params: Vec<JsonRpcParam>,
+}
+
+impl MulticallMethod {
+    fn new(method_name: &'static str, params: Vec<JsonRpcParam>) -> Self {
+        Self {
+            method_name,
+            params,
+        }
+    }
 }
 
 impl JsonRpcRequest {
@@ -170,6 +187,44 @@ pub fn build_purge_stopped_request(id: RequestId, secret: Option<&Secret>) -> Js
     }
 }
 
+pub fn build_multicall_request(id: RequestId, calls: Vec<MulticallMethod>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "system.multicall",
+        params: vec![JsonRpcParam::MethodCalls(calls)],
+    }
+}
+
+pub fn build_get_global_stat_call(secret: Option<&Secret>) -> MulticallMethod {
+    MulticallMethod::new("aria2.getGlobalStat", token_params(secret))
+}
+
+pub fn build_tell_active_call(secret: Option<&Secret>) -> MulticallMethod {
+    let mut params = token_params(secret);
+    params.push(download_item_keys_param());
+
+    MulticallMethod::new("aria2.tellActive", params)
+}
+
+pub fn build_tell_waiting_call(secret: Option<&Secret>) -> MulticallMethod {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::Number(0));
+    params.push(JsonRpcParam::Number(1000));
+    params.push(download_item_keys_param());
+
+    MulticallMethod::new("aria2.tellWaiting", params)
+}
+
+pub fn build_tell_stopped_call(secret: Option<&Secret>, count: u64) -> MulticallMethod {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::Number(0));
+    params.push(JsonRpcParam::Number(count));
+    params.push(download_item_keys_param());
+
+    MulticallMethod::new("aria2.tellStopped", params)
+}
+
 fn build_gid_command_request(
     id: RequestId,
     secret: Option<&Secret>,
@@ -210,10 +265,12 @@ mod tests {
 
     use crate::aria2::domain::Gid;
     use crate::aria2::methods::{
-        JsonRpcParam, RequestId, build_add_uri_request, build_get_global_stat_request,
-        build_get_version_request, build_pause_request, build_purge_stopped_request,
-        build_remove_request, build_tell_active_request, build_tell_stopped_request,
-        build_tell_waiting_request, build_unpause_request,
+        JsonRpcParam, RequestId, build_add_uri_request, build_get_global_stat_call,
+        build_get_global_stat_request, build_get_version_request, build_multicall_request,
+        build_pause_request, build_purge_stopped_request, build_remove_request,
+        build_tell_active_call, build_tell_active_request, build_tell_stopped_call,
+        build_tell_stopped_request, build_tell_waiting_call, build_tell_waiting_request,
+        build_unpause_request,
     };
     use crate::config::Secret;
 
@@ -344,6 +401,32 @@ mod tests {
 
         assert_eq!(request.method(), "aria2.purgeDownloadResult");
         assert!(request.params().is_empty());
+    }
+
+    #[test]
+    fn builds_multicall_with_nested_aria2_tokens_only() {
+        let secret = Secret::session("secret-value");
+        let request = build_multicall_request(
+            RequestId::new(50),
+            vec![
+                build_get_global_stat_call(Some(&secret)),
+                build_tell_active_call(Some(&secret)),
+                build_tell_waiting_call(Some(&secret)),
+                build_tell_stopped_call(Some(&secret), 50),
+            ],
+        );
+
+        let body: Value = serde_json::to_value(&request).expect("request serializes");
+
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert!(body.get("json-rpc").is_none());
+        assert_eq!(body["method"], "system.multicall");
+        assert_eq!(body["params"][0][0]["methodName"], "aria2.getGlobalStat");
+        assert_eq!(body["params"][0][0]["params"][0], "token:secret-value");
+        assert_eq!(body["params"][0][1]["methodName"], "aria2.tellActive");
+        assert_eq!(body["params"][0][1]["params"][0], "token:secret-value");
+        assert_eq!(body["params"][0][1]["params"][1][0], "gid");
+        assert!(!format!("{request:?}").contains("secret-value"));
     }
 
     fn assert_download_item_keys(param: &JsonRpcParam) {
