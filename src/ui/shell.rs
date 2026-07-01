@@ -14,22 +14,20 @@ pub fn view(state: &State) -> Element<'_, Message> {
         text(connection_label(state.connection_status())),
         text(format!("Down {}", state.download_speed_text())),
         text(format!("Up {}", state.upload_speed_text())),
+        text(state.refresh_state_text()),
         button("Settings").on_press(Message::Toolbar(ToolbarMessage::OpenSettings)),
     ]
     .align_y(Alignment::Center)
     .spacing(16)
     .width(Length::Fill);
 
-    let main_content = column![
-        text("Offline").size(20),
-        text("Configure an aria2 RPC endpoint to get started."),
-    ]
-    .spacing(8)
-    .width(Length::Fill);
+    let main_content = crate::ui::downloads::view(state);
 
     let status = row![
         text(state.status_text()),
+        text(state.refresh_state_text()),
         text(state.counts_text()),
+        text(state.refresh_feedback().unwrap_or("")),
         text(if state.is_settings_ready() {
             "Settings ready"
         } else {
@@ -47,10 +45,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     if state.is_settings_open() {
         shell = shell.push(settings_modal(state));
-    }
-
-    if let Some(feedback) = state.stats_feedback() {
-        shell = shell.push(text(feedback));
     }
 
     container(shell)

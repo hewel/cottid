@@ -74,6 +74,41 @@ pub fn build_get_global_stat_request(id: RequestId, secret: Option<&Secret>) -> 
     }
 }
 
+pub fn build_tell_active_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.tellActive",
+        params: token_params(secret),
+    }
+}
+
+pub fn build_tell_waiting_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push("0".to_owned());
+    params.push("1000".to_owned());
+
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.tellWaiting",
+        params,
+    }
+}
+
+pub fn build_tell_stopped_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push("0".to_owned());
+    params.push("1000".to_owned());
+
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.tellStopped",
+        params,
+    }
+}
+
 fn token_params(secret: Option<&Secret>) -> Vec<String> {
     secret
         .map(|secret| format!("token:{}", secret.expose_for_session()))
@@ -85,6 +120,7 @@ fn token_params(secret: Option<&Secret>) -> Vec<String> {
 mod tests {
     use crate::aria2::methods::{
         RequestId, build_get_global_stat_request, build_get_version_request,
+        build_tell_active_request, build_tell_stopped_request, build_tell_waiting_request,
     };
     use crate::config::Secret;
 
@@ -113,5 +149,31 @@ mod tests {
         assert_eq!(request.id(), RequestId::new(11));
         assert_eq!(request.method(), "aria2.getGlobalStat");
         assert!(request.params().is_empty());
+    }
+
+    #[test]
+    fn builds_tell_active_request() {
+        let request = build_tell_active_request(RequestId::new(21), None);
+
+        assert_eq!(request.method(), "aria2.tellActive");
+        assert!(request.params().is_empty());
+    }
+
+    #[test]
+    fn builds_tell_waiting_request_with_offset_and_count() {
+        let request = build_tell_waiting_request(RequestId::new(22), None);
+
+        assert_eq!(request.method(), "aria2.tellWaiting");
+        assert_eq!(request.params(), &["0", "1000"]);
+    }
+
+    #[test]
+    fn builds_tell_stopped_request_with_secret_offset_and_count() {
+        let secret = Secret::session("secret-value");
+        let request = build_tell_stopped_request(RequestId::new(23), Some(&secret));
+
+        assert_eq!(request.method(), "aria2.tellStopped");
+        assert_eq!(request.params(), &["token:secret-value", "0", "1000"]);
+        assert!(!format!("{request:?}").contains("secret-value"));
     }
 }

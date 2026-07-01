@@ -1,15 +1,21 @@
 use serde_json::to_string;
 
-use crate::aria2::domain::{GlobalStats, VersionInfo};
+use crate::aria2::domain::{DownloadItem, DownloadSnapshot, GlobalStats, VersionInfo};
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::{
     JsonRpcRequest, RequestId, build_get_global_stat_request, build_get_version_request,
+    build_tell_active_request, build_tell_stopped_request, build_tell_waiting_request,
 };
-use crate::aria2::raw_types::{parse_get_version_response, parse_global_stats_response};
+use crate::aria2::raw_types::{
+    parse_download_items_response, parse_get_version_response, parse_global_stats_response,
+};
 use crate::config::{RpcAuth, Settings};
 
 const CONNECTION_TEST_REQUEST_ID: RequestId = RequestId::new(1);
 const GLOBAL_STATS_REQUEST_ID: RequestId = RequestId::new(2);
+const TELL_ACTIVE_REQUEST_ID: RequestId = RequestId::new(3);
+const TELL_WAITING_REQUEST_ID: RequestId = RequestId::new(4);
+const TELL_STOPPED_REQUEST_ID: RequestId = RequestId::new(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -76,20 +82,16 @@ pub fn test_connection(settings: Settings) -> Result<ConnectionTest, ClientError
     test_connection_with_transport(&settings, &transport)
 }
 
-pub fn fetch_global_stats(settings: Settings) -> Result<GlobalStats, ClientError> {
+pub fn fetch_download_snapshot(settings: Settings) -> Result<DownloadSnapshot, ClientError> {
     let transport = ReqwestTransport::new();
-    fetch_global_stats_with_transport(&settings, &transport)
+    fetch_download_snapshot_with_transport(&settings, &transport)
 }
 
 pub fn test_connection_with_transport(
     settings: &Settings,
     transport: &impl Transport,
 ) -> Result<ConnectionTest, ClientError> {
-    let secret = match settings.auth() {
-        RpcAuth::NoSecret => None,
-        RpcAuth::SessionSecret(secret) => Some(secret),
-    };
-    let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, secret);
+    let request = build_get_version_request(CONNECTION_TEST_REQUEST_ID, secret(settings));
     let body = send_rpc_request(settings, transport, request)?;
     let version = parse_get_version_response(&body, CONNECTION_TEST_REQUEST_ID)?;
 
@@ -100,14 +102,54 @@ pub fn fetch_global_stats_with_transport(
     settings: &Settings,
     transport: &impl Transport,
 ) -> Result<GlobalStats, ClientError> {
-    let secret = match settings.auth() {
-        RpcAuth::NoSecret => None,
-        RpcAuth::SessionSecret(secret) => Some(secret),
-    };
-    let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, secret);
+    let request = build_get_global_stat_request(GLOBAL_STATS_REQUEST_ID, secret(settings));
     let body = send_rpc_request(settings, transport, request)?;
 
     parse_global_stats_response(&body, GLOBAL_STATS_REQUEST_ID)
+}
+
+pub fn fetch_download_snapshot_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+) -> Result<DownloadSnapshot, ClientError> {
+    let global_stats = fetch_global_stats_with_transport(settings, transport)?;
+    let secret = secret(settings);
+
+    let active = fetch_download_items(
+        settings,
+        transport,
+        build_tell_active_request(TELL_ACTIVE_REQUEST_ID, secret),
+        TELL_ACTIVE_REQUEST_ID,
+    )?;
+    let waiting = fetch_download_items(
+        settings,
+        transport,
+        build_tell_waiting_request(TELL_WAITING_REQUEST_ID, secret),
+        TELL_WAITING_REQUEST_ID,
+    )?;
+    let stopped = fetch_download_items(
+        settings,
+        transport,
+        build_tell_stopped_request(TELL_STOPPED_REQUEST_ID, secret),
+        TELL_STOPPED_REQUEST_ID,
+    )?;
+
+    let mut items = active;
+    items.extend(waiting);
+    items.extend(stopped);
+
+    Ok(DownloadSnapshot::new(global_stats, items))
+}
+
+fn fetch_download_items(
+    settings: &Settings,
+    transport: &impl Transport,
+    request: JsonRpcRequest,
+    request_id: RequestId,
+) -> Result<Vec<DownloadItem>, ClientError> {
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_download_items_response(&body, request_id)
 }
 
 fn send_rpc_request(
@@ -127,6 +169,13 @@ fn send_rpc_request(
     }
 
     Ok(response.body)
+}
+
+fn secret(settings: &Settings) -> Option<&crate::config::Secret> {
+    match settings.auth() {
+        RpcAuth::NoSecret => None,
+        RpcAuth::SessionSecret(secret) => Some(secret),
+    }
 }
 
 struct ReqwestTransport {
@@ -167,22 +216,29 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        HttpPost, HttpResponse, Transport, fetch_global_stats_with_transport,
-        test_connection_with_transport,
+        HttpPost, HttpResponse, Transport, fetch_download_snapshot_with_transport,
+        fetch_global_stats_with_transport, test_connection_with_transport,
     };
     use crate::aria2::errors::ClientError;
     use crate::config::{RpcAuth, Secret, Settings, SettingsDraft};
 
     #[derive(Debug)]
     struct FakeTransport {
-        response: Result<HttpResponse, ClientError>,
+        responses: RefCell<Vec<Result<HttpResponse, ClientError>>>,
         posts: RefCell<Vec<HttpPost>>,
     }
 
     impl FakeTransport {
         fn returning(response: Result<HttpResponse, ClientError>) -> Self {
             Self {
-                response,
+                responses: RefCell::new(vec![response]),
+                posts: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn returning_sequence(responses: Vec<Result<HttpResponse, ClientError>>) -> Self {
+            Self {
+                responses: RefCell::new(responses),
                 posts: RefCell::new(Vec::new()),
             }
         }
@@ -191,7 +247,12 @@ mod tests {
     impl Transport for FakeTransport {
         fn post(&self, request: HttpPost) -> Result<HttpResponse, ClientError> {
             self.posts.borrow_mut().push(request);
-            self.response.clone()
+            let mut responses = self.responses.borrow_mut();
+            if responses.len() > 1 {
+                responses.remove(0)
+            } else {
+                responses[0].clone()
+            }
         }
     }
 
@@ -267,6 +328,70 @@ mod tests {
         assert!(matches!(
             fetch_global_stats_with_transport(&settings, &transport),
             Err(ClientError::MalformedResponse(_))
+        ));
+    }
+
+    #[test]
+    fn download_snapshot_fetches_stats_active_waiting_and_stopped() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning_sequence(vec![
+            Ok(HttpResponse::ok(
+                r#"{"jsonrpc":"2.0","id":2,"result":{"downloadSpeed":"1536","uploadSpeed":"512","numActive":"1","numWaiting":"1","numStopped":"1"}}"#,
+            )),
+            Ok(HttpResponse::ok(
+                r#"{"jsonrpc":"2.0","id":3,"result":[{"gid":"active-gid","status":"active","totalLength":"2000","completedLength":"1000","downloadSpeed":"500","uploadSpeed":"0","files":[]}]}"#,
+            )),
+            Ok(HttpResponse::ok(
+                r#"{"jsonrpc":"2.0","id":4,"result":[{"gid":"waiting-gid","status":"waiting","totalLength":"3000","completedLength":"0","files":[]}]}"#,
+            )),
+            Ok(HttpResponse::ok(
+                r#"{"jsonrpc":"2.0","id":5,"result":[{"gid":"stopped-gid","status":"complete","totalLength":"4000","completedLength":"4000","files":[]}]}"#,
+            )),
+        ]);
+
+        let snapshot = fetch_download_snapshot_with_transport(&settings, &transport)
+            .expect("snapshot should parse");
+
+        assert_eq!(snapshot.global_stats().active_downloads(), 1);
+        assert_eq!(snapshot.items().len(), 3);
+        assert_eq!(snapshot.items()[0].gid().as_str(), "active-gid");
+        assert_eq!(snapshot.items()[1].gid().as_str(), "waiting-gid");
+        assert_eq!(snapshot.items()[2].gid().as_str(), "stopped-gid");
+
+        let methods = transport
+            .posts
+            .borrow()
+            .iter()
+            .map(|post| {
+                let body: Value = serde_json::from_str(post.body()).expect("request body is JSON");
+                body["method"].as_str().expect("method").to_owned()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            methods,
+            [
+                "aria2.getGlobalStat",
+                "aria2.tellActive",
+                "aria2.tellWaiting",
+                "aria2.tellStopped"
+            ]
+        );
+    }
+
+    #[test]
+    fn download_snapshot_returns_error_when_any_refresh_call_fails() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning_sequence(vec![
+            Ok(HttpResponse::ok(
+                r#"{"jsonrpc":"2.0","id":2,"result":{"downloadSpeed":"0","uploadSpeed":"0","numActive":"0","numWaiting":"0","numStopped":"0"}}"#,
+            )),
+            Err(ClientError::Transport("connection refused".to_owned())),
+        ]);
+
+        assert!(matches!(
+            fetch_download_snapshot_with_transport(&settings, &transport),
+            Err(ClientError::Transport(_))
         ));
     }
 

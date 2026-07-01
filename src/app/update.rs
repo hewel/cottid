@@ -1,11 +1,11 @@
 use iced::Task;
 
-use super::{ConnectionMessage, Message, SettingsMessage, State, StatsMessage, ToolbarMessage};
+use super::{ConnectionMessage, DownloadsMessage, Message, SettingsMessage, State, ToolbarMessage};
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
         Message::Connection(message) => update_connection(state, message),
-        Message::Stats(message) => update_stats(state, message),
+        Message::Downloads(message) => update_downloads(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
     }
@@ -36,13 +36,17 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
             settings,
             result,
         } => {
-            if state.finish_connection_test(generation, result) {
-                let stats_generation = state.begin_stats_refresh();
+            if state.finish_connection_test(generation, settings, result) {
+                let Some((refresh_generation, refresh_settings)) = state.begin_downloads_refresh()
+                else {
+                    return Task::none();
+                };
+
                 return Task::perform(
-                    async move { crate::aria2::client::fetch_global_stats(settings) },
+                    async move { crate::aria2::client::fetch_download_snapshot(refresh_settings) },
                     move |result| {
-                        Message::Stats(StatsMessage::RefreshFinished {
-                            generation: stats_generation,
+                        Message::Downloads(DownloadsMessage::RefreshFinished {
+                            generation: refresh_generation,
                             result,
                         })
                     },
@@ -54,10 +58,26 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
     }
 }
 
-fn update_stats(state: &mut State, message: StatsMessage) -> Task<Message> {
+fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Message> {
     match message {
-        StatsMessage::RefreshFinished { generation, result } => {
-            state.finish_stats_refresh(generation, result);
+        DownloadsMessage::RefreshRequested => {
+            let Some((generation, settings)) = state.begin_downloads_refresh() else {
+                return Task::none();
+            };
+
+            Task::perform(
+                async move { crate::aria2::client::fetch_download_snapshot(settings) },
+                move |result| {
+                    Message::Downloads(DownloadsMessage::RefreshFinished { generation, result })
+                },
+            )
+        }
+        DownloadsMessage::FilterChanged(filter) => {
+            state.set_download_filter(filter);
+            Task::none()
+        }
+        DownloadsMessage::RefreshFinished { generation, result } => {
+            state.finish_downloads_refresh(generation, result);
             Task::none()
         }
     }

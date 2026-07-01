@@ -1,6 +1,8 @@
 use serde::Deserialize;
 
-use crate::aria2::domain::{GlobalStats, VersionInfo};
+use crate::aria2::domain::{
+    DownloadFile, DownloadItem, DownloadStatus, Gid, GlobalStats, VersionInfo,
+};
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::RequestId;
 
@@ -33,6 +35,32 @@ struct RawGlobalStats {
     waiting_downloads: String,
     #[serde(rename = "numStopped")]
     stopped_downloads: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDownloadItem {
+    gid: String,
+    status: String,
+    #[serde(rename = "totalLength")]
+    total_length: String,
+    #[serde(rename = "completedLength")]
+    completed_length: String,
+    #[serde(rename = "downloadSpeed", default)]
+    download_speed: String,
+    #[serde(rename = "uploadSpeed", default)]
+    upload_speed: String,
+    #[serde(default)]
+    files: Vec<RawDownloadFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDownloadFile {
+    path: String,
+    length: String,
+    #[serde(rename = "completedLength")]
+    completed_length: String,
+    #[serde(default)]
+    selected: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,6 +101,18 @@ pub fn parse_global_stats_response(
     ))
 }
 
+pub fn parse_download_items_response(
+    body: &str,
+    expected_id: RequestId,
+) -> Result<Vec<DownloadItem>, ClientError> {
+    let envelope: JsonRpcEnvelope<Vec<RawDownloadItem>> = parse_envelope(body, expected_id)?;
+    let raw_items = envelope
+        .result
+        .ok_or_else(|| ClientError::MalformedResponse("missing downloads result".to_owned()))?;
+
+    raw_items.into_iter().map(parse_download_item).collect()
+}
+
 fn parse_envelope<T>(body: &str, expected_id: RequestId) -> Result<JsonRpcEnvelope<T>, ClientError>
 where
     T: for<'de> Deserialize<'de>,
@@ -97,10 +137,47 @@ where
     Ok(envelope)
 }
 
+fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError> {
+    let gid = Gid::new(raw.gid)
+        .map_err(|error| ClientError::MalformedResponse(error.message().to_owned()))?;
+    let files = raw
+        .files
+        .into_iter()
+        .map(parse_download_file)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(DownloadItem::new(
+        gid,
+        DownloadStatus::from_aria2(raw.status),
+        parse_u64("totalLength", &raw.total_length)?,
+        parse_u64("completedLength", &raw.completed_length)?,
+        parse_optional_u64("downloadSpeed", &raw.download_speed)?,
+        parse_optional_u64("uploadSpeed", &raw.upload_speed)?,
+        files,
+    ))
+}
+
+fn parse_download_file(raw: RawDownloadFile) -> Result<DownloadFile, ClientError> {
+    Ok(DownloadFile::new(
+        raw.path,
+        parse_u64("file.length", &raw.length)?,
+        parse_u64("file.completedLength", &raw.completed_length)?,
+        raw.selected == "true",
+    ))
+}
+
 fn parse_u64(field: &'static str, value: &str) -> Result<u64, ClientError> {
     value.parse::<u64>().map_err(|error| {
         ClientError::MalformedResponse(format!("{field} must be an unsigned integer: {error}"))
     })
+}
+
+fn parse_optional_u64(field: &'static str, value: &str) -> Result<u64, ClientError> {
+    if value.is_empty() {
+        return Ok(0);
+    }
+
+    parse_u64(field, value)
 }
 
 fn parse_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
@@ -111,7 +188,9 @@ fn parse_u32(field: &'static str, value: &str) -> Result<u32, ClientError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_get_version_response, parse_global_stats_response};
+    use super::{
+        parse_download_items_response, parse_get_version_response, parse_global_stats_response,
+    };
     use crate::aria2::errors::ClientError;
     use crate::aria2::methods::RequestId;
 
@@ -192,6 +271,54 @@ mod tests {
             RequestId::new(11),
         )
         .expect_err("malformed numeric field should fail");
+
+        assert!(matches!(error, ClientError::MalformedResponse(_)));
+    }
+
+    #[test]
+    fn parses_download_items_with_typed_gid_status_files_and_numbers() {
+        let items = parse_download_items_response(
+            r#"{"jsonrpc":"2.0","id":21,"result":[{"gid":"abc123","status":"active","totalLength":"2048","completedLength":"1024","downloadSpeed":"512","uploadSpeed":"0","files":[{"path":"/tmp/file.iso","length":"2048","completedLength":"1024","selected":"true"}]}]}"#,
+            RequestId::new(21),
+        )
+        .expect("valid downloads");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].gid().as_str(), "abc123");
+        assert_eq!(
+            items[0].status(),
+            &crate::aria2::domain::DownloadStatus::Active
+        );
+        assert_eq!(items[0].total_length_bytes(), 2048);
+        assert_eq!(items[0].completed_length_bytes(), 1024);
+        assert_eq!(items[0].download_speed_bytes_per_second(), 512);
+        assert_eq!(items[0].files()[0].path(), "/tmp/file.iso");
+        assert_eq!(items[0].files()[0].length_bytes(), 2048);
+        assert_eq!(items[0].files()[0].completed_length_bytes(), 1024);
+        assert!(items[0].files()[0].selected());
+    }
+
+    #[test]
+    fn keeps_unknown_download_status_as_typed_domain_value() {
+        let items = parse_download_items_response(
+            r#"{"jsonrpc":"2.0","id":21,"result":[{"gid":"abc123","status":"mystery","totalLength":"0","completedLength":"0","files":[]}]}"#,
+            RequestId::new(21),
+        )
+        .expect("unknown status is still data");
+
+        assert_eq!(
+            items[0].status(),
+            &crate::aria2::domain::DownloadStatus::Unknown("mystery".to_owned())
+        );
+    }
+
+    #[test]
+    fn rejects_download_items_with_malformed_numeric_fields() {
+        let error = parse_download_items_response(
+            r#"{"jsonrpc":"2.0","id":21,"result":[{"gid":"abc123","status":"active","totalLength":"large","completedLength":"0","files":[]}]}"#,
+            RequestId::new(21),
+        )
+        .expect_err("malformed item should fail");
 
         assert!(matches!(error, ClientError::MalformedResponse(_)));
     }

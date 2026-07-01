@@ -1,4 +1,3 @@
-#[cfg(test)]
 pub fn format_bytes(bytes: u64) -> String {
     format_quantity(bytes, "")
 }

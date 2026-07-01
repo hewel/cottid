@@ -1,8 +1,8 @@
 use crate::aria2::client::ConnectionTest;
-use crate::aria2::domain::GlobalStats;
+use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, GlobalStats};
 use crate::aria2::errors::ClientError;
 use crate::config::{RpcAuthDraft, Settings, SettingsDraft};
-use crate::util::format::format_speed;
+use crate::util::format::{format_bytes, format_speed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -12,11 +12,94 @@ pub enum ConnectionStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadFilter {
+    All,
+    Active,
+    Waiting,
+    Paused,
+    Complete,
+    Error,
+}
+
+impl DownloadFilter {
+    pub const ALL: [Self; 6] = [
+        Self::All,
+        Self::Active,
+        Self::Waiting,
+        Self::Paused,
+        Self::Complete,
+        Self::Error,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Active => "Active",
+            Self::Waiting => "Waiting",
+            Self::Paused => "Paused",
+            Self::Complete => "Complete",
+            Self::Error => "Error",
+        }
+    }
+
+    fn matches(self, item: &DownloadItem) -> bool {
+        match self {
+            Self::All => true,
+            Self::Active => matches!(item.status(), DownloadStatus::Active),
+            Self::Waiting => matches!(item.status(), DownloadStatus::Waiting),
+            Self::Paused => matches!(item.status(), DownloadStatus::Paused),
+            Self::Complete => matches!(item.status(), DownloadStatus::Complete),
+            Self::Error => matches!(item.status(), DownloadStatus::Error),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshState {
+    NeverRefreshed,
+    Refreshing,
+    Fresh,
+    Stale,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadRowView {
+    name: String,
+    gid: String,
+    status: String,
+    progress: String,
+    speed: String,
+}
+
+impl DownloadRowView {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn gid(&self) -> &str {
+        &self.gid
+    }
+
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    pub fn progress(&self) -> &str {
+        &self.progress
+    }
+
+    pub fn speed(&self) -> &str {
+        &self.speed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     connection: ConnectionState,
     settings: SettingsState,
     stats: StatsState,
+    downloads: DownloadsState,
 }
 
 impl State {
@@ -29,6 +112,7 @@ impl State {
                 status: ConnectionStatus::Offline,
                 generation: 0,
                 version: None,
+                settings: None,
             },
             settings: SettingsState {
                 applied: applied_settings,
@@ -36,9 +120,12 @@ impl State {
                 open: false,
                 feedback: None,
             },
-            stats: StatsState {
+            stats: StatsState { global: None },
+            downloads: DownloadsState {
                 generation: 0,
-                global: None,
+                items: Vec::new(),
+                filter: DownloadFilter::All,
+                refresh_state: RefreshState::NeverRefreshed,
                 feedback: None,
             },
         }
@@ -84,10 +171,6 @@ impl State {
         self.settings.feedback.as_deref()
     }
 
-    pub fn stats_feedback(&self) -> Option<&str> {
-        self.stats.feedback.as_deref()
-    }
-
     pub fn download_speed_text(&self) -> String {
         format_speed(
             self.stats
@@ -119,9 +202,81 @@ impl State {
         )
     }
 
+    pub fn refresh_state(&self) -> RefreshState {
+        self.downloads.refresh_state
+    }
+
+    pub fn refresh_state_text(&self) -> &'static str {
+        match self.downloads.refresh_state {
+            RefreshState::NeverRefreshed => "Never refreshed",
+            RefreshState::Refreshing => "Refreshing",
+            RefreshState::Fresh => "Fresh",
+            RefreshState::Stale => "Stale",
+        }
+    }
+
+    pub fn refresh_feedback(&self) -> Option<&str> {
+        self.downloads.feedback.as_deref()
+    }
+
+    pub fn selected_filter(&self) -> DownloadFilter {
+        self.downloads.filter
+    }
+
+    pub fn filter_count(&self, filter: DownloadFilter) -> usize {
+        self.downloads
+            .items
+            .iter()
+            .filter(|item| filter.matches(item))
+            .count()
+    }
+
+    pub fn download_rows(&self) -> Vec<DownloadRowView> {
+        self.downloads
+            .items
+            .iter()
+            .filter(|item| self.downloads.filter.matches(item))
+            .map(download_row_view)
+            .collect()
+    }
+
+    pub fn downloads_empty_text(&self) -> Option<String> {
+        if matches!(self.downloads.refresh_state, RefreshState::Refreshing)
+            && self.downloads.items.is_empty()
+        {
+            return Some("Loading downloads...".to_owned());
+        }
+
+        if self.downloads.items.is_empty() {
+            return Some("No downloads found.".to_owned());
+        }
+
+        if self.download_rows().is_empty() {
+            return Some(format!(
+                "No {} downloads.",
+                self.downloads.filter.label().to_ascii_lowercase()
+            ));
+        }
+
+        None
+    }
+
+    pub fn is_connected(&self) -> bool {
+        matches!(self.connection.status, ConnectionStatus::Connected)
+    }
+
+    pub(super) fn polling_interval_seconds(&self) -> u16 {
+        self.settings.applied.polling_interval_seconds()
+    }
+
     #[cfg(test)]
     pub fn global_stats(&self) -> Option<GlobalStats> {
         self.stats.global
+    }
+
+    #[cfg(test)]
+    pub fn download_items(&self) -> &[DownloadItem] {
+        &self.downloads.items
     }
 
     pub fn status_text(&self) -> String {
@@ -154,8 +309,8 @@ impl State {
         self.connection.generation += 1;
         self.connection.status = ConnectionStatus::Testing;
         self.connection.version = None;
-        self.stats.global = None;
-        self.stats.feedback = None;
+        self.connection.settings = None;
+        self.clear_snapshot();
         self.settings.feedback = None;
 
         Some((self.connection.generation, settings))
@@ -164,6 +319,7 @@ impl State {
     pub(super) fn finish_connection_test(
         &mut self,
         generation: u64,
+        settings: Settings,
         result: Result<ConnectionTest, ClientError>,
     ) -> bool {
         if generation != self.connection.generation {
@@ -174,45 +330,61 @@ impl State {
             Ok(result) => {
                 self.connection.status = ConnectionStatus::Connected;
                 self.connection.version = Some(result.version().version().to_owned());
+                self.connection.settings = Some(settings);
                 self.settings.feedback = Some("Connection test succeeded.".to_owned());
                 true
             }
             Err(error) => {
                 self.connection.status = ConnectionStatus::Failed;
                 self.connection.version = None;
-                self.stats.global = None;
-                self.stats.feedback = None;
+                self.connection.settings = None;
+                self.clear_snapshot();
                 self.settings.feedback = Some(error.display_message().to_owned());
                 false
             }
         }
     }
 
-    pub(super) fn begin_stats_refresh(&mut self) -> u64 {
-        self.stats.generation += 1;
-        self.stats.feedback = None;
-        self.stats.generation
+    pub(super) fn begin_downloads_refresh(&mut self) -> Option<(u64, Settings)> {
+        let settings = self.connection.settings.clone()?;
+
+        self.downloads.generation += 1;
+        self.downloads.refresh_state = RefreshState::Refreshing;
+        self.downloads.feedback = None;
+
+        Some((self.downloads.generation, settings))
     }
 
-    pub(super) fn finish_stats_refresh(
+    pub(super) fn finish_downloads_refresh(
         &mut self,
         generation: u64,
-        result: Result<GlobalStats, ClientError>,
+        result: Result<DownloadSnapshot, ClientError>,
     ) {
-        if generation != self.stats.generation {
+        if generation != self.downloads.generation {
             return;
         }
 
         match result {
-            Ok(stats) => {
-                self.stats.global = Some(stats);
-                self.stats.feedback = None;
+            Ok(snapshot) => {
+                let (global_stats, items) = snapshot.into_parts();
+                self.stats.global = Some(global_stats);
+                self.downloads.items = items;
+                self.downloads.refresh_state = RefreshState::Fresh;
+                self.downloads.feedback = None;
             }
             Err(error) => {
-                self.stats.global = None;
-                self.stats.feedback = Some(error.display_message().to_owned());
+                self.downloads.refresh_state = if self.downloads.items.is_empty() {
+                    RefreshState::NeverRefreshed
+                } else {
+                    RefreshState::Stale
+                };
+                self.downloads.feedback = Some(error.display_message().to_owned());
             }
         }
+    }
+
+    pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {
+        self.downloads.filter = filter;
     }
 
     pub(super) fn open_settings(&mut self) {
@@ -270,6 +442,13 @@ impl State {
             }
         }
     }
+
+    fn clear_snapshot(&mut self) {
+        self.stats.global = None;
+        self.downloads.items.clear();
+        self.downloads.refresh_state = RefreshState::NeverRefreshed;
+        self.downloads.feedback = None;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,6 +456,7 @@ struct ConnectionState {
     status: ConnectionStatus,
     generation: u64,
     version: Option<String>,
+    settings: Option<Settings>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,8 +469,15 @@ struct SettingsState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StatsState {
-    generation: u64,
     global: Option<GlobalStats>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DownloadsState {
+    generation: u64,
+    items: Vec<DownloadItem>,
+    filter: DownloadFilter,
+    refresh_state: RefreshState,
     feedback: Option<String>,
 }
 
@@ -301,4 +488,60 @@ fn connection_label(status: ConnectionStatus) -> &'static str {
         ConnectionStatus::Connected => "Connected",
         ConnectionStatus::Failed => "Connection failed",
     }
+}
+
+fn download_row_view(item: &DownloadItem) -> DownloadRowView {
+    DownloadRowView {
+        name: download_name(item),
+        gid: item.gid().as_str().to_owned(),
+        status: item.status().display_label().to_owned(),
+        progress: progress_text(item),
+        speed: speed_text(item),
+    }
+}
+
+fn download_name(item: &DownloadItem) -> String {
+    item.files()
+        .iter()
+        .find(|file| file.selected())
+        .or_else(|| item.files().first())
+        .map(|file| {
+            file.path()
+                .rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(file.path())
+                .to_owned()
+        })
+        .unwrap_or_else(|| item.gid().as_str().to_owned())
+}
+
+fn progress_text(item: &DownloadItem) -> String {
+    if item.total_length_bytes() == 0 {
+        return format!("{} / unknown", format_bytes(item.completed_length_bytes()));
+    }
+
+    let percentage =
+        item.completed_length_bytes() as f64 * 100.0 / item.total_length_bytes() as f64;
+
+    format!(
+        "{percentage:.0}% | {} / {}",
+        format_bytes(item.completed_length_bytes()),
+        format_bytes(item.total_length_bytes())
+    )
+}
+
+fn speed_text(item: &DownloadItem) -> String {
+    let download_speed = item.download_speed_bytes_per_second();
+    let upload_speed = item.upload_speed_bytes_per_second();
+
+    if upload_speed > 0 {
+        return format!(
+            "Down {} | Up {}",
+            format_speed(download_speed),
+            format_speed(upload_speed)
+        );
+    }
+
+    format!("Down {}", format_speed(download_speed))
 }

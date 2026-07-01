@@ -5,8 +5,8 @@ mod update;
 
 use iced::{Element, Task};
 
-pub use message::{ConnectionMessage, Message, SettingsMessage, StatsMessage, ToolbarMessage};
-pub use state::{ConnectionStatus, State};
+pub use message::{ConnectionMessage, DownloadsMessage, Message, SettingsMessage, ToolbarMessage};
+pub use state::{ConnectionStatus, DownloadFilter, DownloadRowView, RefreshState, State};
 
 pub fn run() -> iced::Result {
     iced::application(State::initial, update, view)
@@ -30,13 +30,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
     use crate::aria2::client::ConnectionTest;
-    use crate::aria2::domain::{GlobalStats, VersionInfo};
+    use crate::aria2::domain::{
+        DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats, VersionInfo,
+    };
     use crate::aria2::errors::ClientError;
     use crate::config::{RpcAuthDraft, Settings};
 
     use super::{
-        ConnectionMessage, ConnectionStatus, Message, SettingsMessage, State, StatsMessage,
-        ToolbarMessage,
+        ConnectionMessage, ConnectionStatus, DownloadFilter, DownloadsMessage, Message,
+        RefreshState, SettingsMessage, State, ToolbarMessage,
     };
 
     #[test]
@@ -68,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn subscription_hook_is_available_before_polling_exists() {
+    fn subscription_hook_is_available_before_connection() {
         let state = State::initial();
 
         let _subscription = super::subscription(&state);
@@ -237,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_refresh_result_updates_visible_shell_labels() {
+    fn download_snapshot_refresh_result_updates_visible_shell_labels_and_rows() {
         let mut state = State::initial();
         let _task = super::update(
             &mut state,
@@ -254,9 +256,12 @@ mod tests {
 
         let _task = super::update(
             &mut state,
-            Message::Stats(StatsMessage::RefreshFinished {
+            Message::Downloads(DownloadsMessage::RefreshFinished {
                 generation: 1,
-                result: Ok(GlobalStats::new(1_536, 512, 2, 3, 4)),
+                result: Ok(snapshot_with_items(vec![download_item(
+                    "active-gid",
+                    DownloadStatus::Active,
+                )])),
             }),
         );
 
@@ -267,43 +272,55 @@ mod tests {
         assert_eq!(state.download_speed_text(), "1.5 KiB/s");
         assert_eq!(state.upload_speed_text(), "512 B/s");
         assert_eq!(state.counts_text(), "Active 2 | Waiting 3 | Stopped 4");
+        assert_eq!(state.download_items().len(), 1);
+        assert_eq!(state.download_rows()[0].name(), "active-gid.bin");
+        assert_eq!(state.refresh_state(), RefreshState::Fresh);
     }
 
     #[test]
-    fn stale_stats_refresh_results_are_ignored() {
+    fn stale_download_snapshot_results_are_ignored() {
         let mut state = State::initial();
+        connect(&mut state);
 
-        let first_generation = state.begin_stats_refresh();
-        let _second_generation = state.begin_stats_refresh();
+        let (first_generation, _) = state.begin_downloads_refresh().expect("first refresh");
+        let _second_generation = state.begin_downloads_refresh().expect("second refresh");
         let _task = super::update(
             &mut state,
-            Message::Stats(StatsMessage::RefreshFinished {
+            Message::Downloads(DownloadsMessage::RefreshFinished {
                 generation: first_generation,
-                result: Ok(GlobalStats::new(1_536, 0, 1, 0, 0)),
+                result: Ok(snapshot_with_items(vec![download_item(
+                    "active-gid",
+                    DownloadStatus::Active,
+                )])),
             }),
         );
 
         assert_eq!(state.global_stats(), None);
         assert_eq!(state.download_speed_text(), "0 B/s");
+        assert_eq!(state.download_items().len(), 0);
     }
 
     #[test]
-    fn stats_errors_are_display_safe_and_clear_stale_stats() {
+    fn refresh_errors_preserve_last_good_snapshot_and_mark_stale() {
         let mut state = State::initial();
+        connect(&mut state);
 
-        let generation = state.begin_stats_refresh();
+        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
         let _task = super::update(
             &mut state,
-            Message::Stats(StatsMessage::RefreshFinished {
+            Message::Downloads(DownloadsMessage::RefreshFinished {
                 generation,
-                result: Ok(GlobalStats::new(1_536, 0, 1, 0, 0)),
+                result: Ok(snapshot_with_items(vec![download_item(
+                    "active-gid",
+                    DownloadStatus::Active,
+                )])),
             }),
         );
 
-        let generation = state.begin_stats_refresh();
+        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
         let _task = super::update(
             &mut state,
-            Message::Stats(StatsMessage::RefreshFinished {
+            Message::Downloads(DownloadsMessage::RefreshFinished {
                 generation,
                 result: Err(ClientError::Transport(
                     "token:super-secret refused".to_owned(),
@@ -311,11 +328,96 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.global_stats(), None);
         assert_eq!(
-            state.stats_feedback(),
+            state.global_stats(),
+            Some(GlobalStats::new(1_536, 512, 2, 3, 4))
+        );
+        assert_eq!(state.download_items().len(), 1);
+        assert_eq!(state.refresh_state(), RefreshState::Stale);
+        assert_eq!(
+            state.refresh_feedback(),
             Some("Connection failed. Check the endpoint and secret.")
         );
         assert!(!format!("{state:?}").contains("super-secret"));
+    }
+
+    #[test]
+    fn filter_state_returns_only_matching_download_rows() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        let (generation, _) = state.begin_downloads_refresh().expect("refresh");
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation,
+                result: Ok(snapshot_with_items(vec![
+                    download_item("active-gid", DownloadStatus::Active),
+                    download_item("waiting-gid", DownloadStatus::Waiting),
+                    download_item("error-gid", DownloadStatus::Error),
+                ])),
+            }),
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Error)),
+        );
+
+        assert_eq!(state.download_rows().len(), 1);
+        assert_eq!(state.download_rows()[0].gid(), "error-gid");
+        assert_eq!(state.filter_count(DownloadFilter::All), 3);
+        assert_eq!(state.filter_count(DownloadFilter::Active), 1);
+    }
+
+    #[test]
+    fn empty_and_loading_download_states_have_display_text() {
+        let mut state = State::initial();
+
+        assert_eq!(
+            state.downloads_empty_text(),
+            Some("No downloads found.".to_owned())
+        );
+
+        connect(&mut state);
+        let _refresh = state.begin_downloads_refresh().expect("refresh");
+
+        assert_eq!(
+            state.downloads_empty_text(),
+            Some("Loading downloads...".to_owned())
+        );
+    }
+
+    fn connect(state: &mut State) {
+        let _task = super::update(state, Message::Connection(ConnectionMessage::TestRequested));
+        let _task = super::update(
+            state,
+            Message::Connection(ConnectionMessage::TestFinished {
+                generation: 1,
+                settings: Settings::default(),
+                result: Ok(ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new()))),
+            }),
+        );
+    }
+
+    fn snapshot_with_items(items: Vec<DownloadItem>) -> DownloadSnapshot {
+        DownloadSnapshot::new(GlobalStats::new(1_536, 512, 2, 3, 4), items)
+    }
+
+    fn download_item(gid: &str, status: DownloadStatus) -> DownloadItem {
+        DownloadItem::new(
+            Gid::new(gid).expect("valid gid"),
+            status,
+            2048,
+            1024,
+            512,
+            0,
+            vec![DownloadFile::new(
+                format!("/tmp/{gid}.bin"),
+                2048,
+                1024,
+                true,
+            )],
+        )
     }
 }
