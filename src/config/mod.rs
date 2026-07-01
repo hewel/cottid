@@ -1,4 +1,7 @@
 use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_ENDPOINT: &str = "http://localhost:6800/jsonrpc";
 const DEFAULT_POLLING_INTERVAL_SECONDS: u16 = 2;
@@ -21,6 +24,20 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub fn new_without_secret(
+        endpoint: impl Into<String>,
+        polling_interval_seconds: u16,
+    ) -> Result<Self, EndpointValidationError> {
+        let endpoint = endpoint.into();
+        Self::validate_endpoint(&endpoint)?;
+
+        Ok(Self {
+            endpoint: endpoint.trim().to_owned(),
+            auth: RpcAuth::NoSecret,
+            polling_interval_seconds: polling_interval_seconds.max(1),
+        })
+    }
+
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
@@ -36,6 +53,188 @@ impl Settings {
     pub fn validate_endpoint(endpoint: &str) -> Result<(), EndpointValidationError> {
         validate_endpoint(endpoint)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedConfig {
+    settings: Settings,
+    selected_filter: String,
+}
+
+impl Default for PersistedConfig {
+    fn default() -> Self {
+        Self {
+            settings: Settings::default(),
+            selected_filter: "all".to_owned(),
+        }
+    }
+}
+
+impl PersistedConfig {
+    pub fn new(settings: Settings, selected_filter: impl Into<String>) -> Self {
+        Self {
+            settings: Settings {
+                endpoint: settings.endpoint,
+                auth: RpcAuth::NoSecret,
+                polling_interval_seconds: settings.polling_interval_seconds,
+            },
+            selected_filter: selected_filter.into(),
+        }
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn selected_filter(&self) -> &str {
+        &self.selected_filter
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigLoad {
+    config: PersistedConfig,
+    feedback: Option<&'static str>,
+}
+
+impl ConfigLoad {
+    #[cfg(test)]
+    pub fn config(&self) -> &PersistedConfig {
+        &self.config
+    }
+
+    pub fn into_config(self) -> PersistedConfig {
+        self.config
+    }
+
+    pub fn feedback(&self) -> Option<&'static str> {
+        self.feedback
+    }
+}
+
+#[derive(Debug)]
+pub struct ConfigSaveError {
+    source: io::Error,
+}
+
+impl ConfigSaveError {
+    pub fn message(&self) -> &'static str {
+        "Config could not be saved."
+    }
+}
+
+impl fmt::Display for ConfigSaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl std::error::Error for ConfigSaveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+pub fn default_config_path() -> PathBuf {
+    if let Some(xdg_config_home) = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return xdg_config_home.join("cottid").join("config");
+    }
+
+    if let Some(home) = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return home.join(".config").join("cottid").join("config");
+    }
+
+    PathBuf::from("cottid").join("config")
+}
+
+pub fn load_config(path: &Path) -> ConfigLoad {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return ConfigLoad {
+                config: PersistedConfig::default(),
+                feedback: None,
+            };
+        }
+        Err(_) => {
+            return ConfigLoad {
+                config: PersistedConfig::default(),
+                feedback: Some("Config could not be read; using defaults."),
+            };
+        }
+    };
+
+    match parse_config(&contents) {
+        Ok(config) => ConfigLoad {
+            config,
+            feedback: None,
+        },
+        Err(()) => ConfigLoad {
+            config: PersistedConfig::default(),
+            feedback: Some("Config was invalid; using defaults."),
+        },
+    }
+}
+
+pub fn save_config(path: &Path, config: &PersistedConfig) -> Result<(), ConfigSaveError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| ConfigSaveError { source })?;
+    }
+
+    fs::write(path, serialize_config(config)).map_err(|source| ConfigSaveError { source })
+}
+
+fn parse_config(contents: &str) -> Result<PersistedConfig, ()> {
+    let mut endpoint = None;
+    let mut polling_interval_seconds = None;
+    let mut selected_filter = None;
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let (key, value) = line.split_once('=').ok_or(())?;
+        let key = key.trim();
+        let value = value.trim();
+
+        match key {
+            "endpoint" => endpoint = Some(value.to_owned()),
+            "polling_interval_seconds" => {
+                polling_interval_seconds = Some(value.parse::<u16>().map_err(|_| ())?);
+            }
+            "selected_filter" => selected_filter = Some(value.to_owned()),
+            "auth" if value == "session-only" || value == "none" => {}
+            _ => {}
+        }
+    }
+
+    let settings = Settings::new_without_secret(
+        endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned()),
+        polling_interval_seconds.unwrap_or(DEFAULT_POLLING_INTERVAL_SECONDS),
+    )
+    .map_err(|_| ())?;
+
+    Ok(PersistedConfig::new(
+        settings,
+        selected_filter.unwrap_or_else(|| "all".to_owned()),
+    ))
+}
+
+fn serialize_config(config: &PersistedConfig) -> String {
+    format!(
+        "endpoint={}\npolling_interval_seconds={}\nselected_filter={}\nauth=session-only\n",
+        config.settings.endpoint(),
+        config.settings.polling_interval_seconds(),
+        config.selected_filter()
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,9 +450,12 @@ fn validate_endpoint(endpoint: &str) -> Result<(), EndpointValidationError> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::{
-        EndpointValidationError, RpcAuth, RpcAuthDraft, Secret, Settings, SettingsDraft,
-        SettingsDraftError,
+        EndpointValidationError, PersistedConfig, RpcAuth, RpcAuthDraft, Secret, Settings,
+        SettingsDraft, SettingsDraftError, load_config, save_config,
     };
 
     #[test]
@@ -337,5 +539,67 @@ mod tests {
             error.message(),
             "Secret is required for token authentication."
         );
+    }
+
+    #[test]
+    fn saves_and_loads_basic_config_without_secret() {
+        let path = temp_config_path("save-load");
+        let settings =
+            Settings::new_without_secret("http://aria2.local:6800/jsonrpc", 5).expect("settings");
+        let config = PersistedConfig::new(settings, "paused");
+
+        save_config(&path, &config).expect("config saves");
+        let loaded = load_config(&path);
+
+        assert_eq!(loaded.feedback(), None);
+        assert_eq!(
+            loaded.config().settings().endpoint(),
+            "http://aria2.local:6800/jsonrpc"
+        );
+        assert_eq!(loaded.config().settings().polling_interval_seconds(), 5);
+        assert_eq!(loaded.config().settings().auth(), &RpcAuth::NoSecret);
+        assert_eq!(loaded.config().selected_filter(), "paused");
+    }
+
+    #[test]
+    fn invalid_config_recovers_to_defaults_with_feedback() {
+        let path = temp_config_path("invalid");
+        fs::write(&path, "endpoint=ftp://bad\n").expect("write invalid config");
+
+        let loaded = load_config(&path);
+
+        assert_eq!(loaded.config().settings(), &Settings::default());
+        assert_eq!(
+            loaded.feedback(),
+            Some("Config was invalid; using defaults.")
+        );
+    }
+
+    #[test]
+    fn session_secret_is_not_persisted() {
+        let path = temp_config_path("secret");
+        let settings = Settings {
+            endpoint: "http://localhost:6800/jsonrpc".to_owned(),
+            auth: RpcAuth::SessionSecret(Secret::session("super-secret")),
+            polling_interval_seconds: 3,
+        };
+        let config = PersistedConfig::new(settings, "all");
+
+        save_config(&path, &config).expect("config saves");
+        let contents = fs::read_to_string(&path).expect("config file");
+        let loaded = load_config(&path);
+
+        assert!(!contents.contains("super-secret"));
+        assert_eq!(loaded.config().settings().auth(), &RpcAuth::NoSecret);
+    }
+
+    fn temp_config_path(name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("cottid-{name}-{unique}"));
+        fs::create_dir_all(&dir).expect("temp dir");
+        dir.join("config")
     }
 }

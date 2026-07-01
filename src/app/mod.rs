@@ -14,7 +14,7 @@ pub use state::{
 };
 
 pub fn run() -> iced::Result {
-    iced::application(State::initial, update, view)
+    iced::application(State::load, update, view)
         .title("Cottid")
         .subscription(subscription)
         .run()
@@ -34,6 +34,9 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::aria2::client::ConnectionTest;
     use crate::aria2::domain::{
         DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats, VersionInfo,
@@ -127,6 +130,84 @@ mod tests {
 
         assert_eq!(state.applied_endpoint(), "http://aria2.local:6800/jsonrpc");
         assert_eq!(state.draft_endpoint(), "http://aria2.local:6800/jsonrpc");
+    }
+
+    #[test]
+    fn saved_settings_reload_from_config_path() {
+        let path = temp_config_path("state-save-load");
+        let mut state = State::load_from_path(path.clone());
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "http://aria2.local:6800/jsonrpc".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::PollingIntervalChanged("7".to_owned())),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        let reloaded = State::load_from_path(path);
+
+        assert_eq!(
+            reloaded.applied_endpoint(),
+            "http://aria2.local:6800/jsonrpc"
+        );
+        assert_eq!(reloaded.draft_polling_interval_seconds(), 7);
+        assert_eq!(reloaded.applied_auth_label(), "No authentication");
+    }
+
+    #[test]
+    fn selected_filter_persists_as_ui_preference() {
+        let path = temp_config_path("filter");
+        let mut state = State::load_from_path(path.clone());
+
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Paused)),
+        );
+
+        let reloaded = State::load_from_path(path);
+
+        assert_eq!(reloaded.selected_filter(), DownloadFilter::Paused);
+    }
+
+    #[test]
+    fn invalid_config_loads_defaults_with_feedback() {
+        let path = temp_config_path("invalid-state");
+        fs::write(&path, "endpoint=ftp://bad\n").expect("write invalid config");
+
+        let state = State::load_from_path(path);
+
+        assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
+        assert_eq!(
+            state.settings_feedback(),
+            Some("Config was invalid; using defaults.")
+        );
+    }
+
+    #[test]
+    fn session_secret_is_not_restored_from_saved_settings() {
+        let path = temp_config_path("session-secret");
+        let mut state = State::load_from_path(path.clone());
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::AuthChanged(RpcAuthDraft::SessionSecret)),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::SecretChanged("super-secret".to_owned())),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        let contents = fs::read_to_string(&path).expect("config contents");
+        let reloaded = State::load_from_path(path);
+
+        assert!(!contents.contains("super-secret"));
+        assert_eq!(reloaded.applied_auth_label(), "No authentication");
     }
 
     #[test]
@@ -754,5 +835,15 @@ mod tests {
                 true,
             )],
         )
+    }
+
+    fn temp_config_path(name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("cottid-app-{name}-{unique}"));
+        fs::create_dir_all(&dir).expect("temp dir");
+        dir.join("config")
     }
 }

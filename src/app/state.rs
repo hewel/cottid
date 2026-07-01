@@ -1,8 +1,13 @@
+use std::path::PathBuf;
+
 use crate::app::{ActionMessage, ActionTarget};
 use crate::aria2::client::ConnectionTest;
 use crate::aria2::domain::{DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats};
 use crate::aria2::errors::ClientError;
-use crate::config::{RpcAuthDraft, Settings, SettingsDraft};
+use crate::config::{
+    ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft, default_config_path,
+    load_config, save_config,
+};
 use crate::util::format::{format_bytes, format_speed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +46,28 @@ impl DownloadFilter {
             Self::Paused => "Paused",
             Self::Complete => "Complete",
             Self::Error => "Error",
+        }
+    }
+
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Active => "active",
+            Self::Waiting => "waiting",
+            Self::Paused => "paused",
+            Self::Complete => "complete",
+            Self::Error => "error",
+        }
+    }
+
+    pub fn from_config_value(value: &str) -> Self {
+        match value {
+            "active" => Self::Active,
+            "waiting" => Self::Waiting,
+            "paused" => Self::Paused,
+            "complete" => Self::Complete,
+            "error" => Self::Error,
+            _ => Self::All,
         }
     }
 
@@ -188,9 +215,34 @@ pub struct State {
 }
 
 impl State {
+    #[cfg(test)]
     pub fn initial() -> Self {
-        let applied_settings = Settings::default();
+        Self::from_persisted_config(PersistedConfig::default(), None, None)
+    }
+
+    pub fn load() -> Self {
+        let config_path = default_config_path();
+        Self::load_from_path(config_path)
+    }
+
+    pub fn load_from_path(config_path: PathBuf) -> Self {
+        let loaded = load_config(&config_path);
+        Self::from_config_load(loaded, Some(config_path))
+    }
+
+    fn from_config_load(loaded: ConfigLoad, config_path: Option<PathBuf>) -> Self {
+        let feedback = loaded.feedback().map(str::to_owned);
+        Self::from_persisted_config(loaded.into_config(), config_path, feedback)
+    }
+
+    fn from_persisted_config(
+        config: PersistedConfig,
+        config_path: Option<PathBuf>,
+        feedback: Option<String>,
+    ) -> Self {
+        let applied_settings = config.settings().clone();
         let draft = SettingsDraft::from_settings(&applied_settings);
+        let selected_filter = DownloadFilter::from_config_value(config.selected_filter());
 
         Self {
             add: AddState {
@@ -210,13 +262,14 @@ impl State {
                 applied: applied_settings,
                 draft,
                 open: false,
-                feedback: None,
+                feedback,
+                config_path,
             },
             stats: StatsState { global: None },
             downloads: DownloadsState {
                 generation: 0,
                 items: Vec::new(),
-                filter: DownloadFilter::All,
+                filter: selected_filter,
                 refresh_state: RefreshState::NeverRefreshed,
                 feedback: None,
             },
@@ -542,6 +595,7 @@ impl State {
 
     pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {
         self.downloads.filter = filter;
+        self.persist_config();
     }
 
     pub(super) fn select_download(&mut self, gid: Gid) {
@@ -744,10 +798,24 @@ impl State {
                 self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
                 self.settings.feedback = None;
                 self.settings.open = false;
+                self.persist_config();
             }
             Err(error) => {
                 self.settings.feedback = Some(error.message().to_owned());
                 self.settings.open = true;
+            }
+        }
+    }
+
+    fn persist_config(&mut self) {
+        let config = PersistedConfig::new(
+            self.settings.applied.clone(),
+            self.downloads.filter.config_value(),
+        );
+
+        if let Some(path) = self.settings.config_path.as_ref() {
+            if let Err(error) = save_config(path, &config) {
+                self.settings.feedback = Some(error.message().to_owned());
             }
         }
     }
@@ -848,6 +916,7 @@ struct SettingsState {
     draft: SettingsDraft,
     open: bool,
     feedback: Option<String>,
+    config_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
