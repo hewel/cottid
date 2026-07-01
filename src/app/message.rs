@@ -1,3 +1,5 @@
+use crate::config::RpcAuthDraft;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Toolbar(ToolbarMessage),
@@ -11,5 +13,10 @@ pub enum ToolbarMessage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsMessage {
-    Close,
+    Cancel,
+    Save,
+    EndpointChanged(String),
+    AuthChanged(RpcAuthDraft),
+    SecretChanged(String),
+    PollingIntervalChanged(String),
 }

@@ -20,8 +20,28 @@ fn update_toolbar(state: &mut State, message: ToolbarMessage) -> Task<Message> {
 
 fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message> {
     match message {
-        SettingsMessage::Close => {
-            state.close_settings();
+        SettingsMessage::Cancel => {
+            state.cancel_settings();
+            Task::none()
+        }
+        SettingsMessage::Save => {
+            state.save_settings();
+            Task::none()
+        }
+        SettingsMessage::EndpointChanged(endpoint) => {
+            state.set_draft_endpoint(endpoint);
+            Task::none()
+        }
+        SettingsMessage::AuthChanged(auth) => {
+            state.set_draft_auth(auth);
+            Task::none()
+        }
+        SettingsMessage::SecretChanged(secret) => {
+            state.set_draft_secret(secret);
+            Task::none()
+        }
+        SettingsMessage::PollingIntervalChanged(value) => {
+            state.set_draft_polling_interval(value);
             Task::none()
         }
     }

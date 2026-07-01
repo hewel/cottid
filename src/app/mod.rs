@@ -29,6 +29,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::RpcAuthDraft;
+
     use super::{ConnectionStatus, Message, SettingsMessage, State, ToolbarMessage};
 
     #[test]
@@ -50,11 +52,11 @@ mod tests {
     }
 
     #[test]
-    fn settings_message_closes_settings() {
+    fn settings_message_cancels_settings() {
         let mut state = State::initial();
         let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
 
-        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Close));
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Cancel));
 
         assert!(!state.is_settings_open());
     }
@@ -71,5 +73,80 @@ mod tests {
         let state = State::initial();
 
         let _element = super::view(&state);
+    }
+
+    #[test]
+    fn settings_draft_does_not_change_applied_settings_until_saved() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "http://aria2.local:6800/jsonrpc".to_owned(),
+            )),
+        );
+
+        assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
+        assert_eq!(state.draft_endpoint(), "http://aria2.local:6800/jsonrpc");
+
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(state.applied_endpoint(), "http://aria2.local:6800/jsonrpc");
+        assert_eq!(state.draft_endpoint(), "http://aria2.local:6800/jsonrpc");
+    }
+
+    #[test]
+    fn cancelling_settings_restores_draft_from_applied_settings() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "http://aria2.local:6800/jsonrpc".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Cancel));
+
+        assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
+        assert_eq!(state.draft_endpoint(), "http://localhost:6800/jsonrpc");
+        assert!(!state.is_settings_open());
+    }
+
+    #[test]
+    fn invalid_endpoint_feedback_stays_in_settings_state() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "ftp://localhost:6800/jsonrpc".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(
+            state.settings_feedback(),
+            Some("Endpoint must start with http:// or https://.")
+        );
+        assert!(state.is_settings_open());
+        assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
+    }
+
+    #[test]
+    fn settings_can_choose_session_secret_without_displaying_secret() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::AuthChanged(RpcAuthDraft::SessionSecret)),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::SecretChanged("super-secret".to_owned())),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(state.applied_auth_label(), "Token secret");
+        assert!(!state.status_text().contains("super-secret"));
     }
 }
