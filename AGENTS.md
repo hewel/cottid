@@ -43,3 +43,30 @@ Use the default five-label triage vocabulary: `needs-triage`, `needs-info`,
 
 This repo uses a single-context domain-doc layout. See
 `docs/agents/domain.md`.
+
+## Realtime update rules
+
+For all future implementation:
+
+- Use a central refresh scheduler.
+- Use iced Subscription for ticks and future external event streams.
+- Use iced Task for async RPC work.
+- Never call RPC from view functions or UI widgets.
+- Never issue one RPC request per visible row.
+- Never start a new refresh while the previous refresh is still in flight.
+- Use refresh generation IDs and discard stale responses.
+- Prefer aria2 batch requests or system.multicall for grouped refreshes.
+- Request only the fields needed by the current UI.
+- Parse raw aria2 numeric string fields during domain conversion, not in views.
+- Store downloads by GID and merge incrementally.
+- Preserve selection, scroll position, dialogs, form drafts, and row expansion state across refreshes.
+- Use different refresh frequencies for active downloads, waiting downloads, stopped downloads, selected details, and global stats.
+- Reduce refresh frequency when unfocused, minimized, disconnected, idle, or when there are no active downloads.
+- Use exponential backoff on connection failures.
+- Treat future WebSocket notifications as invalidation signals, not as direct full-state replacements.
+- Coalesce WebSocket events and refresh through the normal scheduler.
+- Do not render unlimited stopped/history rows.
+- Keep expensive formatting and derived display data out of hot view paths where possible.
+- Keep canonical domain state separate from display-only progress estimation.
+- Add tests around scheduler decisions, stale response handling, GID merge, backoff, and domain conversion.
+- Do not add dependencies without explicit human approval.
