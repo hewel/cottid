@@ -11,7 +11,8 @@ use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::config::{
     AuthStorage, ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft,
-    SystemTokenStore, default_config_path, load_config, save_config_with_token_store,
+    SystemTokenStore, ThemePreference, default_config_path, load_config,
+    save_config_with_token_store,
 };
 use crate::util::format::{format_bytes, format_count, format_eta, format_progress, format_speed};
 
@@ -176,11 +177,16 @@ impl DownloadRowView {
 pub struct DownloadDetailView {
     name: String,
     gid: String,
+    gid_value: Gid,
+    file_icon: FileIcon,
     status: String,
     directory: Option<String>,
     progress: String,
     speeds: String,
     totals: String,
+    can_pause: bool,
+    can_unpause: bool,
+    can_remove: bool,
     technical: Vec<String>,
     torrent: Vec<String>,
     files: Vec<String>,
@@ -194,6 +200,14 @@ impl DownloadDetailView {
 
     pub fn gid(&self) -> &str {
         &self.gid
+    }
+
+    pub fn gid_value(&self) -> Gid {
+        self.gid_value.clone()
+    }
+
+    pub fn file_icon(&self) -> FileIcon {
+        self.file_icon
     }
 
     pub fn status(&self) -> &str {
@@ -214,6 +228,18 @@ impl DownloadDetailView {
 
     pub fn totals(&self) -> &str {
         &self.totals
+    }
+
+    pub fn can_pause(&self) -> bool {
+        self.can_pause
+    }
+
+    pub fn can_unpause(&self) -> bool {
+        self.can_unpause
+    }
+
+    pub fn can_remove(&self) -> bool {
+        self.can_remove
     }
 
     pub fn technical(&self) -> &[String] {
@@ -305,6 +331,8 @@ impl State {
             settings: SettingsState {
                 applied: applied_settings,
                 draft,
+                theme_preference: config.theme_preference(),
+                draft_theme_preference: config.theme_preference(),
                 open: false,
                 feedback,
                 config_path,
@@ -390,6 +418,14 @@ impl State {
         self.settings.draft.polling_interval_seconds()
     }
 
+    pub fn theme_preference(&self) -> ThemePreference {
+        self.settings.theme_preference
+    }
+
+    pub fn draft_theme_preference(&self) -> ThemePreference {
+        self.settings.draft_theme_preference
+    }
+
     pub fn settings_feedback(&self) -> Option<&str> {
         self.settings.feedback.as_deref()
     }
@@ -472,7 +508,7 @@ impl State {
         self.downloads
             .items_by_gid
             .get(selected_gid)
-            .map(download_detail_view)
+            .map(|record| download_detail_view(record, &self.actions))
     }
 
     pub fn can_purge_stopped(&self) -> bool {
@@ -925,6 +961,8 @@ impl State {
         if let Some(pending) = self.settings.pending_plaintext_fallback.take() {
             self.settings.applied = pending.previous_settings;
             self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+            self.settings.theme_preference = pending.previous_theme_preference;
+            self.settings.draft_theme_preference = self.settings.theme_preference;
             self.settings.auth_storage = pending.previous_auth_storage;
             if self.connection.settings.as_ref() == Some(&pending.settings) {
                 self.connection.status = ConnectionStatus::Offline;
@@ -934,6 +972,7 @@ impl State {
             }
         }
         self.settings.draft.cancel_to(&self.settings.applied);
+        self.settings.draft_theme_preference = self.settings.theme_preference;
         self.settings.feedback = None;
         self.settings.open = false;
     }
@@ -964,6 +1003,11 @@ impl State {
         }
     }
 
+    pub(super) fn set_draft_theme_preference(&mut self, theme_preference: ThemePreference) {
+        self.settings.draft_theme_preference = theme_preference;
+        self.settings.feedback = None;
+    }
+
     pub(super) fn save_settings(&mut self) {
         match self.settings.draft.apply() {
             Ok(settings) => {
@@ -984,6 +1028,8 @@ impl State {
 
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.theme_preference = pending.theme_preference;
+        self.settings.draft_theme_preference = self.settings.theme_preference;
         self.settings.pending_plaintext_fallback = None;
         self.settings.auth_storage = AuthStorage::PlaintextFallback;
         self.persist_config_with_auth_storage(
@@ -1002,6 +1048,8 @@ impl State {
 
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.theme_preference = pending.theme_preference;
+        self.settings.draft_theme_preference = self.settings.theme_preference;
         self.settings.pending_plaintext_fallback = None;
         self.settings.auth_storage = AuthStorage::SessionOnly;
         self.persist_config_with_auth_storage(
@@ -1023,8 +1071,10 @@ impl State {
     ) {
         let previous_settings = self.settings.applied.clone();
         let previous_auth_storage = self.settings.auth_storage;
+        let previous_theme_preference = self.settings.theme_preference;
         self.settings.applied = settings;
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.theme_preference = self.settings.draft_theme_preference;
         self.settings.auth_storage = self.next_auth_storage();
         self.settings.pending_plaintext_fallback = None;
         self.settings.feedback = None;
@@ -1032,7 +1082,11 @@ impl State {
 
         let persisted = self.persist_config(
             previous_endpoint.clone(),
-            Some((previous_settings, previous_auth_storage)),
+            Some((
+                previous_settings,
+                previous_auth_storage,
+                previous_theme_preference,
+            )),
         );
         if persisted {
             self.settings.feedback = Some(success_feedback.to_owned());
@@ -1062,7 +1116,7 @@ impl State {
     fn persist_config(
         &mut self,
         previous_endpoint: Option<String>,
-        rollback: Option<(Settings, AuthStorage)>,
+        rollback: Option<(Settings, AuthStorage, ThemePreference)>,
     ) -> bool {
         self.persist_config_with_auth_storage(
             self.settings.auth_storage,
@@ -1075,16 +1129,13 @@ impl State {
         &mut self,
         auth_storage: AuthStorage,
         previous_endpoint: Option<String>,
-        rollback: Option<(Settings, AuthStorage)>,
+        rollback: Option<(Settings, AuthStorage, ThemePreference)>,
     ) -> bool {
-        let config = PersistedConfig::new(
+        let config = PersistedConfig::with_auth_storage_and_theme(
             self.settings.applied.clone(),
             self.downloads.filter.config_value(),
-        );
-        let config = PersistedConfig::with_auth_storage(
-            self.settings.applied.clone(),
-            config.selected_filter(),
             auth_storage,
+            self.settings.theme_preference,
         );
 
         if let Some(path) = self.settings.config_path.as_ref()
@@ -1106,13 +1157,18 @@ impl State {
                     settings: self.settings.applied.clone(),
                     previous_settings: rollback.as_ref().map_or_else(
                         || self.settings.applied.clone(),
-                        |(settings, _)| settings.clone(),
+                        |(settings, _, _)| settings.clone(),
                     ),
                     previous_auth_storage: rollback
                         .as_ref()
-                        .map_or(self.settings.auth_storage, |(_, auth_storage)| {
+                        .map_or(self.settings.auth_storage, |(_, auth_storage, _)| {
                             *auth_storage
                         }),
+                    previous_theme_preference: rollback.as_ref().map_or(
+                        self.settings.theme_preference,
+                        |(_, _, theme_preference)| *theme_preference,
+                    ),
+                    theme_preference: self.settings.theme_preference,
                     previous_endpoint,
                     close_on_success: false,
                     success_feedback: "Settings saved.",
@@ -1282,6 +1338,8 @@ struct AddState {
 struct SettingsState {
     applied: Settings,
     draft: SettingsDraft,
+    theme_preference: ThemePreference,
+    draft_theme_preference: ThemePreference,
     open: bool,
     feedback: Option<String>,
     config_path: Option<PathBuf>,
@@ -1294,6 +1352,8 @@ struct PendingSettingsSave {
     settings: Settings,
     previous_settings: Settings,
     previous_auth_storage: AuthStorage,
+    previous_theme_preference: ThemePreference,
+    theme_preference: ThemePreference,
     previous_endpoint: Option<String>,
     close_on_success: bool,
     success_feedback: &'static str,
@@ -1485,9 +1545,10 @@ fn download_row_view(
     }
 }
 
-fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
+fn download_detail_view(record: &DownloadRecord, actions: &ActionsState) -> DownloadDetailView {
     let item = &record.item;
     let detail = record.detail.as_ref();
+    let action_available = actions.pending.is_none();
     let mut technical = Vec::new();
     let mut torrent = Vec::new();
 
@@ -1526,6 +1587,8 @@ fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
     DownloadDetailView {
         name: download_name(item),
         gid: item.gid().as_str().to_owned(),
+        gid_value: item.gid().clone(),
+        file_icon: file_icon_for_item(item),
         status: item.status().display_label().to_owned(),
         directory: detail
             .and_then(DownloadDetail::directory)
@@ -1557,6 +1620,17 @@ fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
                 )
             })
             .collect(),
+        can_pause: action_available && matches!(item.status(), DownloadStatus::Active),
+        can_unpause: action_available
+            && matches!(
+                item.status(),
+                DownloadStatus::Paused | DownloadStatus::Waiting
+            ),
+        can_remove: action_available
+            && !matches!(
+                item.status(),
+                DownloadStatus::Complete | DownloadStatus::Removed
+            ),
         technical,
         torrent,
         error: item.command_error().map(str::to_owned),

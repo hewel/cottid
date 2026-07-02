@@ -1,31 +1,30 @@
-use iced::widget::{button, column, container, row, text, text_input};
+use iced::widget::{button, column, container, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
-    AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message, SettingsMessage,
-    State, ToolbarMessage,
+    ActionMessage, AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message,
+    SettingsMessage, State, ToolbarMessage,
 };
-use crate::config::RpcAuthDraft;
+use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
-        96.0
+        92.0
     } else {
-        260.0
+        248.0
     };
     let sidebar = sidebar(state, state.is_compact_layout()).width(Length::Fixed(sidebar_width));
     let downloads = crate::ui::downloads::view(state);
 
     let main = row![sidebar, downloads]
-        .spacing(18)
+        .spacing(16)
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let mut shell = column![main, status_strip(state)]
-        .spacing(14)
-        .padding(18)
+    let mut shell = column![main]
+        .padding(10)
         .width(Length::Fill)
         .height(Length::Fill);
 
@@ -54,84 +53,71 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
         .align_x(Alignment::Center)
     } else {
         column![
-            text("Cottid").size(26),
-            text(state.applied_endpoint())
-                .size(12)
-                .color(theme::TEXT_MUTED),
-            text(connection_label(state.connection_status())).size(12),
+            row![
+                container(text("C").size(16))
+                    .style(theme::muted_surface)
+                    .padding([6, 9]),
+                text("Cottid").size(24),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
         ]
         .spacing(4)
     };
 
-    let add = nav_button(Icon::Add, if compact { "" } else { "Add" }, true, || {
-        Message::Add(AddMessage::Open)
-    })
-    .style(theme::primary_button);
-    let refresh = nav_button(
-        Icon::Refresh,
-        if compact { "" } else { "Refresh" },
-        true,
-        || Message::Downloads(DownloadsMessage::RefreshRequested),
-    );
-    let settings = nav_button(
-        Icon::Settings,
-        if compact { "" } else { "Settings" },
-        true,
-        || Message::Toolbar(ToolbarMessage::OpenSettings),
-    );
-
     let purge = nav_button(
         Icon::Purge,
-        if compact { "" } else { "Purge" },
+        if compact { "" } else { "Clear results" },
         state.can_purge_stopped(),
-        || Message::Action(crate::app::ActionMessage::PurgeStopped),
+        || Message::Action(ActionMessage::PurgeStopped),
     );
 
     let mut filters = column![].spacing(6);
-    for filter in crate::app::DownloadFilter::ALL {
+    for filter in crate::app::DownloadFilter::ALL
+        .into_iter()
+        .filter(|filter| *filter != crate::app::DownloadFilter::All)
+    {
         let label = if compact {
             filter.label().chars().next().unwrap_or('?').to_string()
         } else {
-            format!("{} {}", filter.label(), state.filter_count(filter))
+            filter.label().to_owned()
         };
         let selected = filter == state.selected_filter();
-        filters = filters.push(filter_button(label, selected, move || {
-            Message::Downloads(DownloadsMessage::FilterChanged(filter))
-        }));
+        filters = filters.push(filter_button(
+            label,
+            state.filter_count(filter),
+            selected,
+            move || Message::Downloads(DownloadsMessage::FilterChanged(filter)),
+        ));
     }
 
-    let mut content = column![
+    let main_content = column![
         title,
-        column![add, refresh, purge, settings].spacing(8),
-        text(if compact { "Views" } else { "Library" })
+        column![purge].spacing(8),
+        text(if compact { "State" } else { "Download state" })
             .size(12)
-            .color(theme::TEXT_MUTED),
+            .style(theme::muted_text),
         filters,
     ]
-    .spacing(18)
+    .spacing(24)
     .width(Length::Fill);
 
+    let mut bottom_content = column![].spacing(10).width(Length::Fill);
+
     if !compact {
-        content = content.push(
-            container(
-                column![
-                    text("Connection").size(12).color(theme::TEXT_MUTED),
-                    text(state.status_text()).size(13),
-                    text(state.applied_auth_label())
-                        .size(12)
-                        .color(theme::TEXT_MUTED),
-                ]
-                .spacing(4),
-            )
-            .style(theme::muted_surface)
-            .padding(12)
-            .width(Length::Fill),
-        );
+        bottom_content = bottom_content.push(connection_status_card(state));
     }
+
+    bottom_content = bottom_content.push(row![settings_icon_button()].width(Length::Fill));
+
+    let content = column![main_content, space::vertical(), bottom_content]
+        .spacing(16)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     container(content)
         .style(theme::sidebar)
-        .padding(14)
+        .padding(18)
         .height(Length::Fill)
 }
 
@@ -142,9 +128,9 @@ fn nav_button(
     message: impl FnOnce() -> Message,
 ) -> button::Button<'static, Message> {
     let content = if label.is_empty() {
-        row![icon(icon_kind, 18, theme::TEXT)].align_y(Alignment::Center)
+        row![icon(icon_kind, 18, theme::text_color)].align_y(Alignment::Center)
     } else {
-        row![icon(icon_kind, 18, theme::TEXT), text(label).size(14)]
+        row![icon(icon_kind, 18, theme::text_color), text(label).size(14)]
             .spacing(8)
             .align_y(Alignment::Center)
     };
@@ -160,40 +146,66 @@ fn nav_button(
     }
 }
 
+fn connection_status_card(state: &State) -> Element<'_, Message> {
+    container(
+        column![
+            text("Connection").size(12).style(theme::muted_text),
+            text(state.status_text()).size(13),
+            text(state.applied_auth_label())
+                .size(12)
+                .style(theme::muted_text),
+            text(state.applied_endpoint())
+                .size(12)
+                .style(theme::muted_text),
+            text(state.counts_text()).size(12).style(theme::muted_text),
+            text(format!("Down {}", state.download_speed_text()))
+                .size(12)
+                .style(theme::muted_text),
+            text(format!("Up {}", state.upload_speed_text()))
+                .size(12)
+                .style(theme::muted_text),
+        ]
+        .spacing(4),
+    )
+    .style(theme::muted_surface)
+    .padding(12)
+    .width(Length::Fill)
+    .into()
+}
+
+fn settings_icon_button() -> button::Button<'static, Message> {
+    button(icon(Icon::Settings, 18, theme::text_color))
+        .padding(10)
+        .style(theme::subtle_button)
+        .on_press(Message::Toolbar(ToolbarMessage::OpenSettings))
+}
+
 fn filter_button(
     label: String,
+    count: usize,
     selected: bool,
     message: impl FnOnce() -> Message,
 ) -> Element<'static, Message> {
-    let button = button(text(label).size(14))
-        .padding([8, 10])
+    let content = if label.len() == 1 {
+        row![text(label).size(14)].align_y(Alignment::Center)
+    } else {
+        row![
+            text(label).size(14).width(Length::Fill),
+            text(count.to_string()).size(13).style(theme::muted_text),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    };
+    let button = button(content)
+        .padding([9, 12])
         .width(Length::Fill)
         .style(if selected {
-            theme::primary_button
+            theme::selected_button
         } else {
             theme::subtle_button
         });
 
     button.on_press(message()).into()
-}
-
-fn status_strip(state: &State) -> Element<'_, Message> {
-    let feedback = state.refresh_feedback().unwrap_or("");
-    container(
-        row![
-            text(state.status_text()).size(12),
-            text(format!("Down {}", state.download_speed_text())).size(12),
-            text(format!("Up {}", state.upload_speed_text())).size(12),
-            text(state.counts_text()).size(12),
-            text(feedback).size(12).color(theme::RED),
-        ]
-        .spacing(16)
-        .align_y(Alignment::Center),
-    )
-    .style(theme::status_strip)
-    .padding([8, 12])
-    .width(Length::Fill)
-    .into()
 }
 
 fn add_modal(state: &State) -> Element<'_, Message> {
@@ -231,7 +243,7 @@ fn add_modal(state: &State) -> Element<'_, Message> {
                     .unwrap_or("Enter one URI or magnet link.")
             )
             .size(12)
-            .color(theme::TEXT_MUTED),
+            .style(theme::muted_text),
             row![
                 submit,
                 button("Cancel")
@@ -278,21 +290,23 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
 
     let mut fields = column![
         text("Connection Settings").size(20),
-        text("RPC endpoint").size(12).color(theme::TEXT_MUTED),
+        text("RPC endpoint").size(12).style(theme::muted_text),
         endpoint,
-        text("Authentication").size(12).color(theme::TEXT_MUTED),
+        text("Authentication").size(12).style(theme::muted_text),
         auth_row,
+        text("Theme").size(12).style(theme::muted_text),
+        theme_row(state.draft_theme_preference()),
     ]
     .spacing(8);
 
     if matches!(state.draft_auth(), RpcAuthDraft::SessionSecret) {
         fields = fields
-            .push(text("Secret").size(12).color(theme::TEXT_MUTED))
+            .push(text("Secret").size(12).style(theme::muted_text))
             .push(secret);
     }
 
     fields = fields
-        .push(text("Polling interval").size(12).color(theme::TEXT_MUTED))
+        .push(text("Polling interval").size(12).style(theme::muted_text))
         .push(polling)
         .push(
             text(
@@ -301,7 +315,7 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
                     .unwrap_or("Settings are not persisted yet."),
             )
             .size(12)
-            .color(theme::TEXT_MUTED),
+            .style(theme::muted_text),
         );
 
     let mut actions = row![
@@ -354,6 +368,37 @@ fn auth_button(
         .style(theme::subtle_button)
         .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
         .into()
+}
+
+fn theme_row(selected: ThemePreference) -> Element<'static, Message> {
+    let mut row = row![].spacing(8);
+
+    for preference in ThemePreference::ALL {
+        row = row.push(theme_button(preference, selected));
+    }
+
+    row.into()
+}
+
+fn theme_button(
+    preference: ThemePreference,
+    selected: ThemePreference,
+) -> button::Button<'static, Message> {
+    let label = if preference == selected {
+        format!("{} selected", preference.label())
+    } else {
+        preference.label().to_owned()
+    };
+
+    button(text(label))
+        .style(if preference == selected {
+            theme::selected_button
+        } else {
+            theme::subtle_button
+        })
+        .on_press(Message::Settings(SettingsMessage::ThemePreferenceChanged(
+            preference,
+        )))
 }
 
 fn connection_label(status: ConnectionStatus) -> &'static str {

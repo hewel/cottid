@@ -1,5 +1,7 @@
 # Light premium shell and local SVG icons
 
+Status: superseded by ADR-0004
+
 Cottid uses a light, neutral, premium desktop shell for the MVP UI instead of a
 toolbar-first utility layout.
 

@@ -4,7 +4,9 @@ mod state;
 mod subscriptions;
 mod update;
 
-use iced::{Element, Task};
+use iced::{Element, Task, Theme};
+
+use crate::config::ThemePreference;
 
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
@@ -19,6 +21,7 @@ pub fn run() -> iced::Result {
     iced::application(boot, update, view)
         .title("Cottid")
         .subscription(subscription)
+        .theme(theme)
         .run()
 }
 
@@ -48,6 +51,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
     crate::ui::shell::view(state)
 }
 
+pub fn theme(state: &State) -> Option<Theme> {
+    match state.theme_preference() {
+        ThemePreference::System => None,
+        ThemePreference::Light => Some(Theme::Light),
+        ThemePreference::Dark => Some(Theme::Dark),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -60,7 +71,7 @@ mod tests {
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
-    use crate::config::{RpcAuthDraft, Settings};
+    use crate::config::{RpcAuthDraft, Settings, ThemePreference};
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
@@ -269,6 +280,42 @@ mod tests {
         let reloaded = State::load_from_path(path);
 
         assert_eq!(reloaded.selected_filter(), DownloadFilter::Paused);
+    }
+
+    #[test]
+    fn theme_preference_persists_as_ui_preference() {
+        let path = temp_config_path("theme");
+        let mut state = State::load_from_path(path.clone());
+
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::ThemePreferenceChanged(
+                ThemePreference::Dark,
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        let reloaded = State::load_from_path(path);
+
+        assert_eq!(reloaded.theme_preference(), ThemePreference::Dark);
+    }
+
+    #[test]
+    fn system_theme_preference_defers_to_iced_system_theme() {
+        let mut state = State::initial();
+
+        assert_eq!(super::theme(&state), None);
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::ThemePreferenceChanged(
+                ThemePreference::Light,
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(super::theme(&state), Some(iced::Theme::Light));
     }
 
     #[test]

@@ -285,5 +285,9 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
             state.set_draft_polling_interval(value);
             Task::none()
         }
+        SettingsMessage::ThemePreferenceChanged(theme_preference) => {
+            state.set_draft_theme_preference(theme_preference);
+            Task::none()
+        }
     }
 }

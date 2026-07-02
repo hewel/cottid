@@ -1,5 +1,5 @@
 use iced::widget::svg;
-use iced::{Color, Element, Length};
+use iced::{Color, Element, Length, Theme};
 
 use crate::app::{FileIcon, Message};
 
@@ -20,7 +20,6 @@ pub enum Icon {
     Pause,
     Play,
     Purge,
-    Refresh,
     Settings,
     Torrent,
     Video,
@@ -42,7 +41,6 @@ impl Icon {
             Self::Pause => "pause.svg",
             Self::Play => "play.svg",
             Self::Purge => "broom.svg",
-            Self::Refresh => "arrows-clockwise.svg",
             Self::Settings => "gear.svg",
             Self::Torrent => "cloud-arrow-down.svg",
             Self::Video => "file-video.svg",
@@ -65,10 +63,12 @@ impl From<FileIcon> for Icon {
     }
 }
 
-pub fn icon(icon: Icon, size: u16, color: Color) -> Element<'static, Message> {
+pub fn icon(icon: Icon, size: u16, color: fn(&Theme) -> Color) -> Element<'static, Message> {
     svg::Svg::from_path(format!("{ICON_ROOT}/{}", icon.file_name()))
         .width(Length::Fixed(f32::from(size)))
         .height(Length::Fixed(f32::from(size)))
-        .style(move |_theme, _status| svg::Style { color: Some(color) })
+        .style(move |theme, _status| svg::Style {
+            color: Some(color(theme)),
+        })
         .into()
 }

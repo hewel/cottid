@@ -7,7 +7,7 @@ Run against an existing aria2 RPC server.
 - Add URI: submit one HTTP(S) URI and confirm pending, success, and refreshed list.
 - Add magnet: submit one magnet link and confirm pending, success, and refreshed list.
 - Actions: pause, unpause, remove one row, and confirm pending state plus refresh.
-- Purge: complete or stop a download, purge stopped results, and confirm refresh.
+- Clear results: complete or stop a download, clear stopped results, and confirm refresh.
 - Recovery: stop the daemon after a successful refresh and confirm stale snapshot remains.
 - Slow refresh: make aria2 slow or unreachable and confirm repeated refresh
   ticks do not pile up while one refresh is still running.

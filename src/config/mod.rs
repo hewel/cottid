@@ -77,11 +77,40 @@ pub enum AuthStorage {
     SessionOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemePreference {
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    pub fn from_config_value(value: &str) -> Option<Self> {
+        match value {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedConfig {
     settings: Settings,
     selected_filter: String,
     auth_storage: AuthStorage,
+    theme_preference: ThemePreference,
 }
 
 impl Default for PersistedConfig {
@@ -90,30 +119,42 @@ impl Default for PersistedConfig {
             settings: Settings::default(),
             selected_filter: "all".to_owned(),
             auth_storage: AuthStorage::None,
+            theme_preference: ThemePreference::System,
         }
     }
 }
 
 impl PersistedConfig {
-    pub fn new(settings: Settings, selected_filter: impl Into<String>) -> Self {
-        let auth_storage = match settings.auth() {
-            RpcAuth::NoSecret => AuthStorage::None,
-            RpcAuth::SessionSecret(_) => AuthStorage::Keyring,
-        };
-
-        Self::with_auth_storage(settings, selected_filter, auth_storage)
-    }
-
     pub fn with_auth_storage(
         settings: Settings,
         selected_filter: impl Into<String>,
         auth_storage: AuthStorage,
     ) -> Self {
+        Self::with_auth_storage_and_theme(
+            settings,
+            selected_filter,
+            auth_storage,
+            ThemePreference::System,
+        )
+    }
+
+    pub fn with_auth_storage_and_theme(
+        settings: Settings,
+        selected_filter: impl Into<String>,
+        auth_storage: AuthStorage,
+        theme_preference: ThemePreference,
+    ) -> Self {
         Self {
             settings,
             selected_filter: selected_filter.into(),
             auth_storage,
+            theme_preference,
         }
+    }
+
+    fn with_theme_preference(mut self, theme_preference: ThemePreference) -> Self {
+        self.theme_preference = theme_preference;
+        self
     }
 
     pub fn settings(&self) -> &Settings {
@@ -126,6 +167,10 @@ impl PersistedConfig {
 
     pub fn auth_storage(&self) -> AuthStorage {
         self.auth_storage
+    }
+
+    pub fn theme_preference(&self) -> ThemePreference {
+        self.theme_preference
     }
 }
 
@@ -445,11 +490,22 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
     let settings = Settings::new(endpoint, rpc_auth, polling_interval_seconds).map_err(|_| ())?;
     let selected_filter = config
         .ui
-        .and_then(|ui| ui.selected_filter)
+        .as_ref()
+        .and_then(|ui| ui.selected_filter.clone())
         .unwrap_or_else(|| "all".to_owned());
+    let theme_preference = config
+        .ui
+        .and_then(|ui| ui.theme)
+        .map(Into::into)
+        .unwrap_or(ThemePreference::System);
 
     Ok(ConfigLoad {
-        config: PersistedConfig::with_auth_storage(settings, selected_filter, auth_storage),
+        config: PersistedConfig::with_auth_storage_and_theme(
+            settings,
+            selected_filter,
+            auth_storage,
+            theme_preference,
+        ),
         feedback,
     })
 }
@@ -458,6 +514,7 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
     let mut endpoint = None;
     let mut polling_interval_seconds = None;
     let mut selected_filter = None;
+    let mut theme_preference = None;
 
     for line in contents.lines() {
         let line = line.trim();
@@ -475,6 +532,7 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
                 polling_interval_seconds = Some(value.parse::<u16>().map_err(|_| ())?);
             }
             "selected_filter" => selected_filter = Some(value.to_owned()),
+            "theme" => theme_preference = ThemePreference::from_config_value(value),
             "auth" if value == "session-only" || value == "none" => {}
             _ => {}
         }
@@ -491,7 +549,8 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
             settings,
             selected_filter.unwrap_or_else(|| "all".to_owned()),
             AuthStorage::None,
-        ),
+        )
+        .with_theme_preference(theme_preference.unwrap_or(ThemePreference::System)),
         feedback: None,
     })
 }
@@ -516,6 +575,7 @@ fn serialize_config(config: &PersistedConfig) -> Result<String, toml::ser::Error
         }),
         ui: Some(TomlUi {
             selected_filter: Some(config.selected_filter().to_owned()),
+            theme: Some(config.theme_preference().into()),
         }),
     })
 }
@@ -755,6 +815,35 @@ struct TomlAuth {
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct TomlUi {
     selected_filter: Option<String>,
+    theme: Option<TomlThemePreference>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum TomlThemePreference {
+    System,
+    Light,
+    Dark,
+}
+
+impl From<TomlThemePreference> for ThemePreference {
+    fn from(value: TomlThemePreference) -> Self {
+        match value {
+            TomlThemePreference::System => Self::System,
+            TomlThemePreference::Light => Self::Light,
+            TomlThemePreference::Dark => Self::Dark,
+        }
+    }
+}
+
+impl From<ThemePreference> for TomlThemePreference {
+    fn from(value: ThemePreference) -> Self {
+        match value {
+            ThemePreference::System => Self::System,
+            ThemePreference::Light => Self::Light,
+            ThemePreference::Dark => Self::Dark,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -797,7 +886,7 @@ mod tests {
 
     use super::{
         AuthStorage, EndpointValidationError, PersistedConfig, RpcAuth, RpcAuthDraft, Secret,
-        Settings, SettingsDraft, SettingsDraftError, TokenStore, TokenStoreError,
+        Settings, SettingsDraft, SettingsDraftError, ThemePreference, TokenStore, TokenStoreError,
         load_config_with_token_store, save_config_with_token_store,
     };
 
@@ -903,6 +992,27 @@ mod tests {
         assert_eq!(loaded.config().settings().polling_interval_seconds(), 5);
         assert_eq!(loaded.config().settings().auth(), &RpcAuth::NoSecret);
         assert_eq!(loaded.config().selected_filter(), "paused");
+        assert_eq!(loaded.config().theme_preference(), ThemePreference::System);
+    }
+
+    #[test]
+    fn saves_and_loads_theme_preference() {
+        let path = temp_config_path("theme-preference");
+        let token_store = MemoryTokenStore::default();
+        let settings = Settings::default();
+        let config = PersistedConfig::with_auth_storage_and_theme(
+            settings,
+            "all",
+            AuthStorage::None,
+            ThemePreference::Dark,
+        );
+
+        save_config_with_token_store(&path, &config, None, &token_store).expect("config saves");
+        let contents = fs::read_to_string(&path).expect("config written");
+        let loaded = load_config_with_token_store(&path, &token_store);
+
+        assert!(contents.contains("theme = \"dark\""));
+        assert_eq!(loaded.config().theme_preference(), ThemePreference::Dark);
     }
 
     #[test]
@@ -922,6 +1032,7 @@ mod tests {
         );
         assert_eq!(loaded.config().settings().polling_interval_seconds(), 7);
         assert_eq!(loaded.config().selected_filter(), "error");
+        assert_eq!(loaded.config().theme_preference(), ThemePreference::System);
     }
 
     #[test]

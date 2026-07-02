@@ -6,6 +6,7 @@ use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::config::RpcAuthDraft;
 use crate::config::Settings;
+use crate::config::ThemePreference;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -105,4 +106,5 @@ pub enum SettingsMessage {
     AuthChanged(RpcAuthDraft),
     SecretChanged(String),
     PollingIntervalChanged(String),
+    ThemePreferenceChanged(ThemePreference),
 }
