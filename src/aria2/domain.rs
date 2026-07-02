@@ -148,6 +148,7 @@ impl TorrentDetail {
 pub struct DownloadItem {
     gid: Gid,
     status: DownloadStatus,
+    directory: Option<String>,
     total_length_bytes: u64,
     completed_length_bytes: u64,
     download_speed_bytes_per_second: u64,
@@ -169,6 +170,7 @@ impl DownloadItem {
         Self {
             gid,
             status,
+            directory: None,
             total_length_bytes,
             completed_length_bytes,
             download_speed_bytes_per_second,
@@ -184,6 +186,14 @@ impl DownloadItem {
 
     pub fn status(&self) -> &DownloadStatus {
         &self.status
+    }
+
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
+    pub fn set_directory(&mut self, directory: Option<String>) {
+        self.directory = directory.filter(|value| !value.is_empty());
     }
 
     pub fn total_length_bytes(&self) -> u64 {

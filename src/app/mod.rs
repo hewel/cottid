@@ -1086,6 +1086,70 @@ mod tests {
     }
 
     #[test]
+    fn download_rows_present_shared_folder_download_as_folder_card() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_folder_item(
+                "folder-gid",
+                "/downloads",
+                [
+                    "/downloads/Show Pack/info.txt",
+                    "/downloads/Show Pack/poster.png",
+                    "/downloads/Show Pack/video.mkv",
+                ],
+            )],
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(rows[0].name(), "Show Pack");
+        assert_eq!(rows[0].file_icon(), FileIcon::Folder);
+        assert_eq!(rows[0].metadata(), "3 files | Active | GID folder-gid");
+    }
+
+    #[test]
+    fn download_rows_keep_file_icon_for_multi_file_without_shared_folder() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_folder_item(
+                "loose-gid",
+                "/downloads",
+                ["/downloads/movie.mkv", "/downloads/subtitle.srt"],
+            )],
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(rows[0].name(), "movie.mkv");
+        assert_eq!(rows[0].file_icon(), FileIcon::Video);
+        assert_eq!(rows[0].metadata(), "Active | GID loose-gid");
+    }
+
+    #[test]
+    fn download_rows_keep_file_icon_for_multi_file_in_different_folders() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_folder_item(
+                "split-gid",
+                "/downloads",
+                ["/downloads/one/movie.mkv", "/downloads/two/subtitle.srt"],
+            )],
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(rows[0].name(), "movie.mkv");
+        assert_eq!(rows[0].file_icon(), FileIcon::Video);
+        assert_eq!(rows[0].metadata(), "Active | GID split-gid");
+    }
+
+    #[test]
     fn disappeared_selected_download_clears_selection() {
         let mut state = State::initial();
         connect(&mut state);
@@ -1547,6 +1611,27 @@ mod tests {
             0,
             vec![DownloadFile::new(path, 2048, 1024, true)],
         )
+    }
+
+    fn download_folder_item<const N: usize>(
+        gid: &str,
+        directory: &str,
+        paths: [&str; N],
+    ) -> DownloadItem {
+        let mut item = DownloadItem::new(
+            Gid::new(gid).expect("valid gid"),
+            DownloadStatus::Active,
+            4096,
+            2048,
+            512,
+            0,
+            paths
+                .into_iter()
+                .map(|path| DownloadFile::new(path, 1024, 512, true))
+                .collect(),
+        );
+        item.set_directory(Some(directory.to_owned()));
+        item
     }
 
     fn temp_config_path(name: &str) -> std::path::PathBuf {

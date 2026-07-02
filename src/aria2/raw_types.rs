@@ -321,6 +321,7 @@ fn parse_multicall_entry(
 }
 
 fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError> {
+    let directory = optional_string(&raw.dir);
     let gid = Gid::new(raw.gid)
         .map_err(|error| ClientError::MalformedResponse(error.message().to_owned()))?;
     let files = raw
@@ -329,7 +330,7 @@ fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError
         .map(parse_download_file)
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(DownloadItem::new(
+    let mut item = DownloadItem::new(
         gid,
         DownloadStatus::from_aria2(raw.status),
         parse_u64("totalLength", &raw.total_length)?,
@@ -337,7 +338,10 @@ fn parse_download_item(raw: RawDownloadItem) -> Result<DownloadItem, ClientError
         parse_optional_u64("downloadSpeed", &raw.download_speed)?,
         parse_optional_u64("uploadSpeed", &raw.upload_speed)?,
         files,
-    ))
+    );
+    item.set_directory(directory);
+
+    Ok(item)
 }
 
 fn parse_download_detail(raw: RawDownloadItem) -> Result<DownloadDetail, ClientError> {
@@ -523,7 +527,7 @@ mod tests {
     #[test]
     fn parses_download_items_with_typed_gid_status_files_and_numbers() {
         let items = parse_download_items_response(
-            r#"{"jsonrpc":"2.0","id":21,"result":[{"gid":"abc123","status":"active","totalLength":"2048","completedLength":"1024","downloadSpeed":"512","uploadSpeed":"0","files":[{"path":"/tmp/file.iso","length":"2048","completedLength":"1024","selected":"true"}]}]}"#,
+            r#"{"jsonrpc":"2.0","id":21,"result":[{"gid":"abc123","status":"active","totalLength":"2048","completedLength":"1024","downloadSpeed":"512","uploadSpeed":"0","dir":"/tmp","files":[{"path":"/tmp/file.iso","length":"2048","completedLength":"1024","selected":"true"}]}]}"#,
             RequestId::new(21),
         )
         .expect("valid downloads");
@@ -537,6 +541,7 @@ mod tests {
         assert_eq!(items[0].total_length_bytes(), 2048);
         assert_eq!(items[0].completed_length_bytes(), 1024);
         assert_eq!(items[0].download_speed_bytes_per_second(), 512);
+        assert_eq!(items[0].directory(), Some("/tmp"));
         assert_eq!(items[0].files()[0].path(), "/tmp/file.iso");
         assert_eq!(items[0].files()[0].length_bytes(), 2048);
         assert_eq!(items[0].files()[0].completed_length_bytes(), 1024);

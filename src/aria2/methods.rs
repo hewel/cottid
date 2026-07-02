@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 use crate::aria2::domain::Gid;
 use crate::config::Secret;
 
-const DOWNLOAD_ITEM_KEYS: [&str; 7] = [
+const DOWNLOAD_ITEM_KEYS: [&str; 8] = [
     "gid",
     "status",
     "totalLength",
     "completedLength",
     "downloadSpeed",
     "uploadSpeed",
+    "dir",
     "files",
 ];
 
@@ -366,7 +367,8 @@ mod tests {
 
         let body = serde_json::to_value(&request).expect("request serializes");
         assert_eq!(body["params"][0][0], "gid");
-        assert_eq!(body["params"][0][6], "files");
+        assert_eq!(body["params"][0][6], "dir");
+        assert_eq!(body["params"][0][7], "files");
     }
 
     #[test]
@@ -387,7 +389,8 @@ mod tests {
         assert_eq!(body["params"][0], 0);
         assert_eq!(body["params"][1], 1000);
         assert_eq!(body["params"][2][0], "gid");
-        assert_eq!(body["params"][2][6], "files");
+        assert_eq!(body["params"][2][6], "dir");
+        assert_eq!(body["params"][2][7], "files");
     }
 
     #[test]
@@ -412,7 +415,8 @@ mod tests {
         assert_eq!(body["params"][1], 0);
         assert_eq!(body["params"][2], 50);
         assert_eq!(body["params"][3][0], "gid");
-        assert_eq!(body["params"][3][6], "files");
+        assert_eq!(body["params"][3][6], "dir");
+        assert_eq!(body["params"][3][7], "files");
     }
 
     #[test]
@@ -517,6 +521,7 @@ mod tests {
                 "completedLength".to_owned(),
                 "downloadSpeed".to_owned(),
                 "uploadSpeed".to_owned(),
+                "dir".to_owned(),
                 "files".to_owned(),
             ])
         );

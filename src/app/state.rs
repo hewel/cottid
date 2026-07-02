@@ -165,7 +165,7 @@ pub struct DownloadRowView {
     gid: String,
     gid_value: Gid,
     file_icon: FileIcon,
-    status: String,
+    metadata: String,
     progress: String,
     progress_per_mille: u16,
     download_speed: String,
@@ -184,6 +184,7 @@ impl DownloadRowView {
         &self.name
     }
 
+    #[cfg(test)]
     pub fn gid(&self) -> &str {
         &self.gid
     }
@@ -196,8 +197,8 @@ impl DownloadRowView {
         self.file_icon
     }
 
-    pub fn status(&self) -> &str {
-        &self.status
+    pub fn metadata(&self) -> &str {
+        &self.metadata
     }
 
     pub fn progress(&self) -> &str {
@@ -232,6 +233,7 @@ impl DownloadRowView {
         self.can_remove
     }
 
+    #[cfg(test)]
     pub fn pending(&self) -> bool {
         self.pending
     }
@@ -318,6 +320,7 @@ pub enum FileIcon {
     Document,
     Executable,
     File,
+    Folder,
     Image,
     Torrent,
     Video,
@@ -1689,7 +1692,7 @@ fn download_row_view(
         gid: item.gid().as_str().to_owned(),
         gid_value: item.gid().clone(),
         file_icon: file_icon_for_item(item),
-        status: item.status().display_label().to_owned(),
+        metadata: download_card_metadata(item),
         progress: progress_text(item),
         progress_per_mille: progress_per_mille(item),
         download_speed: speed.download,
@@ -1792,6 +1795,10 @@ fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
 }
 
 fn download_name(item: &DownloadItem) -> String {
+    if let Some(folder) = folder_download(item) {
+        return folder.name.to_owned();
+    }
+
     item.files()
         .iter()
         .find(|file| file.selected())
@@ -1808,6 +1815,10 @@ fn download_name(item: &DownloadItem) -> String {
 }
 
 fn file_icon_for_item(item: &DownloadItem) -> FileIcon {
+    if folder_download(item).is_some() {
+        return FileIcon::Folder;
+    }
+
     let path = item
         .files()
         .iter()
@@ -1845,6 +1856,76 @@ fn file_icon_for_item(item: &DownloadItem) -> FileIcon {
     }
 
     FileIcon::File
+}
+
+fn download_card_metadata(item: &DownloadItem) -> String {
+    if let Some(folder) = folder_download(item) {
+        return format!(
+            "{} | {} | GID {}",
+            file_count_label(folder.file_count),
+            item.status().display_label(),
+            item.gid().as_str()
+        );
+    }
+
+    format!(
+        "{} | GID {}",
+        item.status().display_label(),
+        item.gid().as_str()
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FolderDownload<'a> {
+    name: &'a str,
+    file_count: usize,
+}
+
+fn folder_download(item: &DownloadItem) -> Option<FolderDownload<'_>> {
+    let files = item.files();
+    if files.len() < 2 {
+        return None;
+    }
+
+    let directory = item.directory()?;
+    let mut shared_folder = None;
+
+    for file in files {
+        let relative_path = relative_file_path(directory, file.path())?;
+        let (folder, child_path) = relative_path.split_once('/')?;
+        if folder.is_empty() || child_path.is_empty() {
+            return None;
+        }
+
+        match shared_folder {
+            Some(existing) if existing != folder => return None,
+            Some(_) => {}
+            None => shared_folder = Some(folder),
+        }
+    }
+
+    shared_folder.map(|name| FolderDownload {
+        name,
+        file_count: files.len(),
+    })
+}
+
+fn relative_file_path<'a>(directory: &str, path: &'a str) -> Option<&'a str> {
+    let directory = directory.trim_end_matches('/');
+    if directory.is_empty() {
+        return path.strip_prefix('/');
+    }
+
+    path.strip_prefix(directory)
+        .and_then(|relative| relative.strip_prefix('/'))
+}
+
+fn file_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 file".to_owned()
+    } else {
+        format!("{count} files")
+    }
 }
 
 fn matches_extension(path: &str, extensions: &[&str]) -> bool {

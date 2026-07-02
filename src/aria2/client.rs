@@ -686,15 +686,18 @@ mod tests {
         assert_eq!(calls[2]["methodName"], "aria2.tellWaiting");
         assert_eq!(calls[3]["methodName"], "aria2.tellStopped");
         assert_eq!(calls[1]["params"][0][0], "gid");
-        assert_eq!(calls[1]["params"][0][6], "files");
+        assert_eq!(calls[1]["params"][0][6], "dir");
+        assert_eq!(calls[1]["params"][0][7], "files");
         assert_eq!(calls[2]["params"][0], 0);
         assert_eq!(calls[2]["params"][1], 1000);
         assert_eq!(calls[2]["params"][2][0], "gid");
-        assert_eq!(calls[2]["params"][2][6], "files");
+        assert_eq!(calls[2]["params"][2][6], "dir");
+        assert_eq!(calls[2]["params"][2][7], "files");
         assert_eq!(calls[3]["params"][0], 0);
         assert_eq!(calls[3]["params"][1], DEFAULT_STOPPED_REFRESH_LIMIT);
         assert_eq!(calls[3]["params"][2][0], "gid");
-        assert_eq!(calls[3]["params"][2][6], "files");
+        assert_eq!(calls[3]["params"][2][6], "dir");
+        assert_eq!(calls[3]["params"][2][7], "files");
     }
 
     #[test]

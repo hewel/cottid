@@ -11,3 +11,8 @@ navigation in the current UI.
 User-facing grouped filter shown in the sidebar. The current groups are
 `Active`, which contains waiting, paused, and active downloads, and `Complete`,
 which contains error and complete downloads.
+
+## Folder download
+
+A download whose aria2 file entries share one top-level folder. It is presented
+as a folder rather than as any one child file.

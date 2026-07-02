@@ -148,7 +148,7 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
             ui::muted_panel(icon(Icon::from(row.file_icon()), 24, theme::accent_color)).padding(12),
             column![
                 text(row.name().to_owned()).size(17),
-                text(format!("{} | GID {}", row.status(), row.gid()))
+                text(row.metadata().to_owned())
                     .size(12)
                     .style(theme::muted_text),
             ]
