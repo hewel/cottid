@@ -17,6 +17,12 @@ adding a dedicated widget style adapter layer. The app still avoids CSS
 semantics that do not exist in `iced`: cascade, selectors, inheritance, runtime
 CSS variables, and full browser layout behavior.
 
+Astryx Web button interactions layer a translucent overlay background over the
+base color. `iced` button styles expose a single background slot, so Cottid
+pre-blends hover and pressed overlays with the variant base color and returns
+one `Background::Color`. Transparent variants such as ghost buttons use the
+overlay color itself for hover and pressed states.
+
 Light and dark mode are derived from the resolved `iced::Theme` inside style
 closures. That keeps the System theme preference aligned with iced's platform
 theme handling instead of duplicating OS appearance state in app state.

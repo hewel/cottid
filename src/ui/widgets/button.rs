@@ -1,7 +1,8 @@
 use iced::widget::button;
 use iced::{Background, Border, Color, Theme};
 
-use crate::ui::tokens::{TOKENS, mode_from_theme};
+use crate::ui::color;
+use crate::ui::tokens::{InteractionOverlay, Mode, TOKENS, mode_from_theme};
 use crate::ui::variants::ButtonVariant;
 
 pub(crate) fn style(
@@ -10,96 +11,86 @@ pub(crate) fn style(
     status: button::Status,
 ) -> button::Style {
     let mode = mode_from_theme(theme);
+    let base_background = base_background(mode, variant);
+    let text_color = if matches!(status, button::Status::Disabled) {
+        TOKENS.colors.text_disabled.get(mode)
+    } else {
+        text_color(mode, variant)
+    };
+    let background = interactive_background(
+        base_background,
+        status,
+        TOKENS.interaction_overlay.get(mode),
+    );
 
-    if matches!(status, button::Status::Disabled) {
-        return button_style(
-            Some(TOKENS.colors.background_muted.get(mode)),
-            TOKENS.colors.text_disabled.get(mode),
-            TOKENS.colors.border.get(mode),
-            TOKENS.radius.element,
-        );
-    }
+    button_style(background, text_color, TOKENS.radius.element)
+}
 
+fn base_background(mode: Mode, variant: ButtonVariant) -> Color {
     match variant {
-        ButtonVariant::Primary => {
-            let background = match status {
-                button::Status::Hovered => TOKENS.colors.accent_hover.get(mode),
-                button::Status::Pressed => TOKENS.colors.accent_pressed.get(mode),
-                button::Status::Active | button::Status::Disabled => TOKENS.colors.accent.get(mode),
-            };
-
-            button_style(
-                Some(background),
-                TOKENS.colors.on_accent.get(mode),
-                background,
-                TOKENS.radius.element,
-            )
-        }
-        ButtonVariant::Secondary => {
-            let background = match status {
-                button::Status::Hovered => TOKENS.colors.badge_neutral_background.get(mode),
-                button::Status::Pressed => TOKENS.colors.background_pressed.get(mode),
-                button::Status::Active | button::Status::Disabled => {
-                    TOKENS.colors.background_muted.get(mode)
-                }
-            };
-
-            button_style(
-                Some(background),
-                TOKENS.colors.text_primary.get(mode),
-                TOKENS.colors.border.get(mode),
-                TOKENS.radius.element,
-            )
-        }
-        ButtonVariant::Destructive => {
-            let background = match status {
-                button::Status::Hovered | button::Status::Pressed => {
-                    TOKENS.colors.error_muted.get(mode)
-                }
-                button::Status::Active | button::Status::Disabled => {
-                    TOKENS.colors.background_muted.get(mode)
-                }
-            };
-
-            button_style(
-                Some(background),
-                TOKENS.colors.error.get(mode),
-                TOKENS.colors.error.get(mode),
-                TOKENS.radius.element,
-            )
-        }
-        ButtonVariant::Ghost => {
-            let background = match status {
-                button::Status::Hovered => Some(TOKENS.colors.background_hover.get(mode)),
-                button::Status::Pressed => Some(TOKENS.colors.background_pressed.get(mode)),
-                button::Status::Active | button::Status::Disabled => None,
-            };
-
-            button_style(
-                background,
-                TOKENS.colors.text_primary.get(mode),
-                Color::TRANSPARENT,
-                TOKENS.radius.element,
-            )
-        }
+        ButtonVariant::Primary => TOKENS.colors.accent.get(mode),
+        ButtonVariant::Secondary => TOKENS.colors.background_muted.get(mode),
+        ButtonVariant::Destructive => TOKENS.colors.error_muted.get(mode),
+        ButtonVariant::Ghost => Color::TRANSPARENT,
     }
 }
 
-fn button_style(
-    background: Option<Color>,
-    text_color: Color,
-    border_color: Color,
-    radius: f32,
-) -> button::Style {
+fn text_color(mode: Mode, variant: ButtonVariant) -> Color {
+    match variant {
+        ButtonVariant::Primary => TOKENS.colors.on_accent.get(mode),
+        ButtonVariant::Secondary | ButtonVariant::Ghost => TOKENS.colors.text_primary.get(mode),
+        ButtonVariant::Destructive => TOKENS.colors.error.get(mode),
+    }
+}
+
+fn interactive_background(
+    base: Color,
+    status: button::Status,
+    overlay: InteractionOverlay,
+) -> Color {
+    // CONTEXT: Astryx Web layers an interaction background over the base color.
+    // iced has one background slot, so we pre-blend the overlay into one color.
+    match status {
+        button::Status::Active => base,
+        button::Status::Hovered => overlay_background(base, overlay.hover),
+        button::Status::Pressed => overlay_background(base, overlay.pressed),
+        button::Status::Disabled => scale_alpha(base, 0.5),
+    }
+}
+
+fn overlay_background(base: Color, overlay: Color) -> Color {
+    if base.a <= f32::EPSILON {
+        overlay
+    } else {
+        color::overlay(base, overlay)
+    }
+}
+
+fn scale_alpha(color: Color, factor: f32) -> Color {
+    Color {
+        a: color.a * factor,
+        ..color
+    }
+}
+
+fn button_style(background: Color, text_color: Color, radius: f32) -> button::Style {
     button::Style {
-        background: background.map(Background::Color),
+        background: background_color(background),
         text_color,
         border: Border {
             radius: radius.into(),
-            color: border_color,
-            width: TOKENS.border_width.regular,
+            color: Color::TRANSPARENT,
+            width: 0.0,
         },
         ..button::Style::default()
+    }
+}
+
+fn background_color(background: Color) -> Option<Background> {
+    if background.a <= f32::EPSILON {
+        None
+    } else {
+        Some(Background::Color(background))
     }
 }
 
@@ -107,6 +98,8 @@ fn button_style(
 mod tests {
     use iced::{Background, Color};
 
+    use crate::ui::color;
+    use crate::ui::tokens::{Mode, TOKENS};
     use crate::ui::variants::ButtonVariant;
 
     #[test]
@@ -135,14 +128,52 @@ mod tests {
     }
 
     #[test]
-    fn style_leaves_ghost_button_without_visible_outline() {
+    fn style_leaves_all_buttons_without_visible_outline() {
+        for variant in [
+            ButtonVariant::Primary,
+            ButtonVariant::Secondary,
+            ButtonVariant::Destructive,
+            ButtonVariant::Ghost,
+        ] {
+            let style = super::style(
+                &iced::Theme::Light,
+                variant,
+                iced::widget::button::Status::Active,
+            );
+
+            assert_eq!(style.border.color, Color::TRANSPARENT);
+            assert_eq!(style.border.width, 0.0);
+        }
+    }
+
+    #[test]
+    fn style_uses_overlay_as_background_when_ghost_button_is_hovered() {
         let style = super::style(
             &iced::Theme::Light,
             ButtonVariant::Ghost,
-            iced::widget::button::Status::Active,
+            iced::widget::button::Status::Hovered,
         );
 
-        assert_eq!(style.background, None);
-        assert_eq!(style.border.color, Color::TRANSPARENT);
+        assert_eq!(
+            style.background,
+            Some(Background::Color(
+                TOKENS.interaction_overlay.get(Mode::Light).hover
+            ))
+        );
+    }
+
+    #[test]
+    fn style_blends_overlay_with_base_when_primary_button_is_hovered() {
+        let style = super::style(
+            &iced::Theme::Light,
+            ButtonVariant::Primary,
+            iced::widget::button::Status::Hovered,
+        );
+        let expected = color::overlay(
+            TOKENS.colors.accent.get(Mode::Light),
+            TOKENS.interaction_overlay.get(Mode::Light).hover,
+        );
+
+        assert_eq!(style.background, Some(Background::Color(expected)));
     }
 }

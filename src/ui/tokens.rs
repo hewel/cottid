@@ -25,11 +25,18 @@ impl<T: Copy> Pair<T> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DesignTokens {
     pub(crate) colors: AppColors,
+    pub(crate) interaction_overlay: Pair<InteractionOverlay>,
     pub(crate) spacing: AppSpacing,
     pub(crate) radius: AppRadius,
     pub(crate) border_width: AppBorderWidth,
     pub(crate) shadow: AppShadow,
     pub(crate) typography: AppTypography,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct InteractionOverlay {
+    pub(crate) hover: Color,
+    pub(crate) pressed: Color,
 }
 
 #[allow(dead_code)]
@@ -213,6 +220,16 @@ pub(crate) const TOKENS: DesignTokens = DesignTokens {
             dark: Color::from_rgba8(255, 158, 151, 0.24),
         },
         badge_red_text: pair_rgb((137, 0, 26), (255, 198, 193)),
+    },
+    interaction_overlay: Pair {
+        light: InteractionOverlay {
+            hover: Color::from_rgba8(0, 0, 0, 0.06),
+            pressed: Color::from_rgba8(0, 0, 0, 0.10),
+        },
+        dark: InteractionOverlay {
+            hover: Color::from_rgba8(255, 255, 255, 0.08),
+            pressed: Color::from_rgba8(255, 255, 255, 0.12),
+        },
     },
     spacing: AppSpacing {
         s1: 4.0,
