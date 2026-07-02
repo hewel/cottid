@@ -47,7 +47,8 @@ pub(crate) fn surface_variant(theme: &Theme, variant: SurfaceVariant) -> contain
         SurfaceVariant::SelectedCard => widgets::container::selected_card(theme),
         SurfaceVariant::Muted => widgets::container::muted(theme),
         SurfaceVariant::Search => widgets::container::search(theme),
-        SurfaceVariant::Modal => widgets::container::popover(theme),
+        SurfaceVariant::Modal => widgets::container::modal(theme),
+        SurfaceVariant::Scrim => widgets::container::scrim(theme),
         SurfaceVariant::Feedback(variant) => {
             let mode = mode_from_theme(theme);
             let (background, border_color) = feedback_surface_colors(mode, variant);
@@ -194,9 +195,10 @@ fn feedback_surface_colors(mode: Mode, variant: FeedbackVariant) -> (Color, Colo
 
 #[cfg(test)]
 mod tests {
-    use iced::Color;
+    use iced::{Background, Color};
 
-    use crate::ui::tokens::Mode;
+    use crate::ui::tokens::{Mode, TOKENS};
+    use crate::ui::variants::SurfaceVariant;
 
     #[test]
     fn palette_for_mode_maps_only_basic_iced_palette_fields() {
@@ -210,5 +212,33 @@ mod tests {
         let theme = super::iced_theme_for_mode(Mode::Dark);
 
         assert!(theme.extended_palette().is_dark);
+    }
+
+    #[test]
+    fn modal_surface_uses_astryx_inspired_elevation_without_border() {
+        let style = super::surface_variant(&iced::Theme::Light, SurfaceVariant::Modal);
+
+        assert_eq!(
+            style.background,
+            Some(Background::Color(Color::from_rgb8(255, 255, 255)))
+        );
+        assert_eq!(style.border.width, TOKENS.border_width.hairline);
+        assert_eq!(style.border.color, Color::TRANSPARENT);
+        assert_eq!(style.shadow, TOKENS.shadow.high.get(Mode::Light));
+    }
+
+    #[test]
+    fn scrim_surface_uses_astryx_overlay_alpha() {
+        let light = super::surface_variant(&iced::Theme::Light, SurfaceVariant::Scrim);
+        let dark = super::surface_variant(&iced::Theme::Dark, SurfaceVariant::Scrim);
+
+        assert_eq!(
+            light.background,
+            Some(Background::Color(Color::from_rgba8(0, 0, 0, 0.40)))
+        );
+        assert_eq!(
+            dark.background,
+            Some(Background::Color(Color::from_rgba8(0, 0, 0, 0.64)))
+        );
     }
 }

@@ -25,7 +25,10 @@ pub fn subscription(state: &super::State) -> Subscription<Message> {
 
 fn app_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
     if let Event::Window(iced::window::Event::Resized(size)) = event {
-        return Some(Message::WindowResized(size.width.round() as u32));
+        return Some(Message::WindowResized {
+            width: size.width.round() as u32,
+            height: size.height.round() as u32,
+        });
     }
 
     let Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
@@ -33,7 +36,7 @@ fn app_event(event: Event, _status: event::Status, _window: iced::window::Id) ->
     };
 
     match key {
-        Key::Named(key::Named::Escape) => Some(Message::Add(AddMessage::Cancel)),
+        Key::Named(key::Named::Escape) => Some(Message::ModalCancel),
         Key::Character(value)
             if modifiers.contains(Modifiers::CTRL) && value.eq_ignore_ascii_case("n") =>
         {
@@ -72,7 +75,7 @@ mod tests {
                 keyboard::Key::Named(keyboard::key::Named::Escape),
                 keyboard::Modifiers::empty()
             ),
-            Some(Message::Add(AddMessage::Cancel))
+            Some(Message::ModalCancel)
         );
         assert_eq!(
             shortcut(

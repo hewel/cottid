@@ -156,6 +156,87 @@ mod tests {
     }
 
     #[test]
+    fn opening_add_closes_settings() {
+        let mut state = State::initial();
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+
+        assert!(state.is_add_open());
+        assert!(!state.is_settings_open());
+    }
+
+    #[test]
+    fn opening_settings_closes_idle_add() {
+        let mut state = State::initial();
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+
+        assert!(state.is_settings_open());
+        assert!(!state.is_add_open());
+    }
+
+    #[test]
+    fn opening_settings_does_not_close_pending_add() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
+
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+
+        assert!(state.is_add_open());
+        assert!(state.is_add_pending());
+        assert!(!state.is_settings_open());
+    }
+
+    #[test]
+    fn modal_cancel_closes_add() {
+        let mut state = State::initial();
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+
+        let _task = super::update(&mut state, Message::ModalCancel);
+
+        assert!(!state.is_add_open());
+    }
+
+    #[test]
+    fn modal_cancel_closes_settings() {
+        let mut state = State::initial();
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+
+        let _task = super::update(&mut state, Message::ModalCancel);
+
+        assert!(!state.is_settings_open());
+    }
+
+    #[test]
+    fn modal_cancel_does_not_close_pending_add() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
+
+        let _task = super::update(&mut state, Message::ModalCancel);
+
+        assert!(state.is_add_open());
+        assert!(state.is_add_pending());
+    }
+
+    #[test]
     fn subscription_hook_is_available_before_connection() {
         let state = State::initial();
 
@@ -166,20 +247,61 @@ mod tests {
     fn window_resize_updates_compact_layout_state() {
         let mut state = State::initial();
 
-        let _task = super::update(&mut state, Message::WindowResized(720));
+        let _task = super::update(
+            &mut state,
+            Message::WindowResized {
+                width: 720,
+                height: 640,
+            },
+        );
 
         assert!(state.is_compact_layout());
 
-        let _task = super::update(&mut state, Message::WindowResized(1200));
+        let _task = super::update(
+            &mut state,
+            Message::WindowResized {
+                width: 1200,
+                height: 800,
+            },
+        );
 
         assert!(!state.is_compact_layout());
     }
 
     #[test]
-    fn view_builds_from_normalized_app_state() {
-        let state = State::initial();
+    fn window_resize_updates_modal_viewport_constraints() {
+        let mut state = State::initial();
 
-        let _element = super::view(&state);
+        let _task = super::update(
+            &mut state,
+            Message::WindowResized {
+                width: 500,
+                height: 600,
+            },
+        );
+
+        assert_eq!(state.modal_max_width(640.0), 450.0);
+        assert_eq!(state.modal_max_height(), 450.0);
+    }
+
+    #[test]
+    fn view_builds_from_normalized_app_state() {
+        let mut state = State::initial();
+
+        {
+            let _element = super::view(&state);
+        }
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        {
+            let _element = super::view(&state);
+        }
+
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+
+        {
+            let _element = super::view(&state);
+        }
     }
 
     #[test]

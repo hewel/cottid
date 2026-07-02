@@ -27,6 +27,7 @@ pub(crate) enum SurfaceVariant {
     Muted,
     Search,
     Modal,
+    Scrim,
     Feedback(FeedbackVariant),
 }
 

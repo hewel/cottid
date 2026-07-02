@@ -1,4 +1,6 @@
-use iced::widget::{button, column, container, row, text, text_input};
+use iced::widget::{
+    button, column, container, mouse_area, opaque, row, scrollable, space, stack, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{FeedbackTone, FormFeedback, Message};
@@ -49,6 +51,34 @@ pub(crate) fn modal_surface<'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> container::Container<'a, Message> {
     surface(content, SurfaceVariant::Modal)
+}
+
+pub(crate) fn modal_layer<'a>(
+    content: impl Into<Element<'a, Message>>,
+    max_width: f32,
+    max_height: f32,
+) -> Element<'a, Message> {
+    let scrim: Element<'a, Message> = mouse_area(
+        surface(space::vertical().width(Length::Fill), SurfaceVariant::Scrim)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .on_press(Message::ModalCancel)
+    .into();
+
+    let modal_content = scrollable(content).width(Length::Fill);
+    let modal_card = opaque(
+        container(modal_content)
+            .width(Length::Fill)
+            .max_width(max_width)
+            .max_height(max_height),
+    );
+    let modal = container(modal_card).padding(24).center(Length::Fill);
+
+    stack(vec![scrim, modal.into()])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 pub(crate) fn search_surface<'a>(

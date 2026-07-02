@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, space, text};
+use iced::widget::{button, column, container, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
@@ -25,20 +25,32 @@ pub fn view(state: &State) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    let mut shell = column![main]
+    let shell = column![main]
         .padding(10)
         .width(Length::Fill)
         .height(Length::Fill);
 
+    let base = ui::app_surface(shell)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+    let mut layers = vec![base.into()];
+
     if state.is_settings_open() {
-        shell = shell.push(settings_modal(state));
+        layers.push(ui::modal_layer(
+            settings_modal(state),
+            state.modal_max_width(640.0),
+            state.modal_max_height(),
+        ));
+    } else if state.is_add_open() {
+        layers.push(ui::modal_layer(
+            add_modal(state),
+            state.modal_max_width(400.0),
+            state.modal_max_height(),
+        ));
     }
 
-    if state.is_add_open() {
-        shell = shell.push(add_modal(state));
-    }
-
-    ui::app_surface(shell)
+    stack(layers)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

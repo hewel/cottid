@@ -14,10 +14,11 @@ pub enum Message {
     Action(ActionMessage),
     Connection(ConnectionMessage),
     Downloads(DownloadsMessage),
+    ModalCancel,
     Selection(SelectionMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
-    WindowResized(u32),
+    WindowResized { width: u32, height: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

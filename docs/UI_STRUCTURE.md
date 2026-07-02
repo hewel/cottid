@@ -173,7 +173,11 @@ Future card additions:
 
 ## Add Download Dialog
 
-The add dialog is a modal overlay.
+The add dialog is a modal overlay. Cottid modals render as one active,
+centered floating layer above the shell with an Astryx-inspired surface,
+high-elevation shadow, blocking backdrop, 400px target width, 90% viewport max
+width, and 75% viewport max height. Overflow scrolls inside the modal. Backdrop
+clicks dismiss the active modal through the same cancel path as Escape.
 
 MVP fields and behavior:
 
@@ -222,7 +226,10 @@ payloads.
 
 ## Settings Page
 
-Use a modal opened from the sidebar.
+Use a modal opened from the sidebar. It uses the same single active,
+Astryx-inspired centered floating modal layer as Add Download, but keeps a
+640px target width for form ergonomics. Opening settings closes an idle add
+dialog, but a pending add submission keeps the add dialog active.
 
 MVP settings:
 
@@ -276,7 +283,7 @@ UI state:
 
 - Active panel.
 - Selected filter.
-- Dialog visibility.
+- Active modal identity.
 - Draft input text.
 - Sort/group preference.
 - Focus/request flags.

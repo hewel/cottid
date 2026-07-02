@@ -40,6 +40,7 @@ pub(crate) struct AppColors {
     pub(crate) background_card: Pair<Color>,
     pub(crate) background_popover: Pair<Color>,
     pub(crate) background_muted: Pair<Color>,
+    pub(crate) background_scrim: Pair<Color>,
     pub(crate) background_hover: Pair<Color>,
     pub(crate) background_pressed: Pair<Color>,
 
@@ -116,6 +117,7 @@ pub(crate) struct AppShadow {
     pub(crate) none: Shadow,
     pub(crate) low: Pair<Shadow>,
     pub(crate) medium: Pair<Shadow>,
+    pub(crate) high: Pair<Shadow>,
 }
 
 #[allow(dead_code)]
@@ -135,6 +137,10 @@ pub(crate) const TOKENS: DesignTokens = DesignTokens {
         background_card: pair_rgb((255, 255, 255), (27, 27, 27)),
         background_popover: pair_rgb((255, 255, 255), (27, 27, 27)),
         background_muted: pair_rgb((241, 241, 241), (27, 27, 27)),
+        background_scrim: Pair {
+            light: Color::from_rgba8(0, 0, 0, 0.40),
+            dark: Color::from_rgba8(0, 0, 0, 0.64),
+        },
         background_hover: Pair {
             light: Color::from_rgba8(0, 0, 0, 0.05),
             dark: Color::from_rgba8(255, 255, 255, 0.05),
@@ -257,6 +263,18 @@ pub(crate) const TOKENS: DesignTokens = DesignTokens {
                 color: Color::from_rgba8(0, 0, 0, 0.50),
                 offset: Vector::new(0.0, 4.0),
                 blur_radius: 12.0,
+            },
+        },
+        high: Pair {
+            light: Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.18),
+                offset: Vector::new(0.0, 18.0),
+                blur_radius: 44.0,
+            },
+            dark: Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.70),
+                offset: Vector::new(0.0, 18.0),
+                blur_radius: 44.0,
             },
         },
     },

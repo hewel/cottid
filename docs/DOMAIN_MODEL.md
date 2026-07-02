@@ -238,7 +238,7 @@ Refresh failures should not clear the last known good snapshot.
 Expected fields:
 
 - Active panel.
-- Dialog visibility.
+- Active modal identity.
 - Sort, filter, and grouping mode.
 - Transient input text.
 - Focus or request flags.

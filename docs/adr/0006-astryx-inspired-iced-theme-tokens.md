@@ -28,8 +28,16 @@ from tinted categorical badges.
 
 Shadows are intentionally minimal. `iced` exposes one `Shadow` per widget style,
 while Astryx shadows can contain multiple layers and inset highlights. Cottid
-approximates this with a single low/medium shadow for popovers and modals; cards
-remain mostly flat and rely on borders, spacing, and contrast.
+approximates this with single low/medium/high shadows; modal surfaces use the
+high shadow and no border, while cards remain mostly flat and rely on borders,
+spacing, and contrast.
+
+Astryx `Dialog` remains a visual reference, not a direct behavior port. Cottid
+uses the modal surface, radius, high shadow, 400px default dialog width, 90%
+viewport max width, 75% viewport max height, and overlay color as guidance. It
+does not port browser-only mechanics such as native `<dialog>`, CSS
+`::backdrop`, backdrop blur, static dialog positioning, fullscreen variants, or
+keyframe enter animation.
 
 Future theme work should add tokens and variants first, then route widget
 styling through `src/ui/widgets`. View modules should continue using UI wrapper

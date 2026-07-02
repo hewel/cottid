@@ -33,13 +33,27 @@ pub(crate) fn selected_card(theme: &Theme) -> container::Style {
     )
 }
 
-pub(crate) fn popover(theme: &Theme) -> container::Style {
+pub(crate) fn modal(theme: &Theme) -> container::Style {
     let mode = mode_from_theme(theme);
     container_style(
-        TOKENS.colors.background_popover.get(mode),
+        TOKENS.colors.background_surface.get(mode),
         TOKENS.colors.text_primary.get(mode),
-        bordered(TOKENS.radius.container, TOKENS.colors.border.get(mode)),
-        TOKENS.shadow.medium.get(mode),
+        Border {
+            radius: TOKENS.radius.container.into(),
+            color: Color::TRANSPARENT,
+            width: TOKENS.border_width.hairline,
+        },
+        TOKENS.shadow.high.get(mode),
+    )
+}
+
+pub(crate) fn scrim(theme: &Theme) -> container::Style {
+    let mode = mode_from_theme(theme);
+    container_style(
+        TOKENS.colors.background_scrim.get(mode),
+        TOKENS.colors.text_primary.get(mode),
+        Border::default(),
+        TOKENS.shadow.none,
     )
 }
 

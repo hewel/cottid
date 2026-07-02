@@ -309,6 +309,7 @@ pub struct State {
     actions: ActionsState,
     selection: SelectionState,
     viewport_width: u32,
+    viewport_height: u32,
 }
 
 impl State {
@@ -386,6 +387,7 @@ impl State {
             },
             selection: SelectionState { selected_gid: None },
             viewport_width: 1280,
+            viewport_height: 800,
         }
     }
 
@@ -578,8 +580,17 @@ impl State {
         self.viewport_width < 900
     }
 
-    pub(super) fn set_viewport_width(&mut self, width: u32) {
+    pub(super) fn set_viewport_size(&mut self, width: u32, height: u32) {
         self.viewport_width = width;
+        self.viewport_height = height;
+    }
+
+    pub fn modal_max_width(&self, target_width: f32) -> f32 {
+        target_width.min(self.viewport_width as f32 * 0.9)
+    }
+
+    pub fn modal_max_height(&self) -> f32 {
+        self.viewport_height as f32 * 0.75
     }
 
     pub(super) fn polling_interval_seconds(&self) -> u16 {
@@ -912,6 +923,14 @@ impl State {
     }
 
     pub(super) fn open_settings(&mut self) {
+        if self.add.pending {
+            return;
+        }
+
+        if self.add.open {
+            self.cancel_add_dialog();
+        }
+
         self.settings.open = true;
         self.settings.feedback = self
             .settings
@@ -921,6 +940,10 @@ impl State {
     }
 
     pub(super) fn open_add_dialog(&mut self) {
+        if self.settings.open {
+            self.cancel_settings();
+        }
+
         self.add.open = true;
         self.add.feedback = None;
     }
@@ -933,6 +956,14 @@ impl State {
         self.add.open = false;
         self.add.input.clear();
         self.add.feedback = None;
+    }
+
+    pub(super) fn cancel_active_modal(&mut self) {
+        if self.add.open {
+            self.cancel_add_dialog();
+        } else if self.settings.open {
+            self.cancel_settings();
+        }
     }
 
     pub(super) fn set_add_input(&mut self, input: String) {
