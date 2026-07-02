@@ -15,6 +15,7 @@ use crate::config::{
     save_config_with_token_store,
 };
 use crate::ui::overlay::{PopoverId, PopoverState};
+use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
 use crate::util::format::{
     format_bytes, format_count, format_eta, format_eta_duration, format_progress, format_speed,
 };
@@ -259,7 +260,7 @@ pub struct DownloadDetailView {
     totals: String,
     technical: Vec<String>,
     torrent: Vec<String>,
-    files: Vec<String>,
+    file_tree: Vec<TreeNode>,
     error: Option<String>,
 }
 
@@ -304,8 +305,8 @@ impl DownloadDetailView {
         &self.torrent
     }
 
-    pub fn files(&self) -> &[String] {
-        &self.files
+    pub fn file_tree(&self) -> &[TreeNode] {
+        &self.file_tree
     }
 
     pub fn error(&self) -> Option<&str> {
@@ -414,7 +415,11 @@ impl State {
                 pending: None,
                 feedback: None,
             },
-            selection: SelectionState { selected_gid: None },
+            selection: SelectionState {
+                selected_gid: None,
+                file_tree_gid: None,
+                file_tree: TreeState::default(),
+            },
             popovers: PopoverState::default(),
             viewport_width: 1280,
             viewport_height: 800,
@@ -572,6 +577,10 @@ impl State {
             .items_by_gid
             .get(selected_gid)
             .map(download_detail_view)
+    }
+
+    pub fn selected_file_tree_state(&self) -> &TreeState {
+        &self.selection.file_tree
     }
 
     pub fn can_purge_stopped(&self) -> bool {
@@ -864,7 +873,12 @@ impl State {
 
     pub(super) fn select_download(&mut self, gid: Gid) -> bool {
         if self.downloads.items_by_gid.contains_key(&gid) {
+            if self.selection.selected_gid.as_ref() != Some(&gid) {
+                self.selection.file_tree_gid = None;
+                self.selection.file_tree = TreeState::default();
+            }
             self.selection.selected_gid = Some(gid);
+            self.initialize_file_tree_for_selected_download();
             self.scheduler.mark_dirty(RefreshDirtyFlags {
                 selected: true,
                 ..RefreshDirtyFlags::default()
@@ -877,6 +891,26 @@ impl State {
 
     pub(super) fn clear_selection(&mut self) {
         self.selection.selected_gid = None;
+        self.selection.file_tree_gid = None;
+        self.selection.file_tree = TreeState::default();
+    }
+
+    pub(super) fn update_file_tree(&mut self, message: TreeMessage) {
+        let Some(selected_gid) = self.selection.selected_gid.as_ref() else {
+            return;
+        };
+        let Some(record) = self.downloads.items_by_gid.get(selected_gid) else {
+            return;
+        };
+        let items = download_file_tree(&record.item);
+        if !tree_node_exists(&items, message.id()) {
+            return;
+        }
+
+        match message {
+            TreeMessage::Toggle(id) => self.selection.file_tree.toggle(id),
+            TreeMessage::Select(id) => self.selection.file_tree.select(id),
+        }
     }
 
     pub(super) fn begin_action(
@@ -1331,6 +1365,7 @@ impl State {
         if let Some(detail) = selected_detail {
             self.merge_selected_detail(detail, merge_tick);
         }
+        self.initialize_file_tree_for_selected_download();
 
         if request.include_active() {
             self.downloads.active_order = active_order;
@@ -1365,6 +1400,22 @@ impl State {
         self.downloads.items_by_gid.insert(gid, record);
     }
 
+    fn initialize_file_tree_for_selected_download(&mut self) {
+        let Some(selected_gid) = self.selection.selected_gid.as_ref() else {
+            return;
+        };
+        if self.selection.file_tree_gid.as_ref() == Some(selected_gid) {
+            return;
+        }
+        let Some(record) = self.downloads.items_by_gid.get(selected_gid) else {
+            return;
+        };
+
+        let items = download_file_tree(&record.item);
+        self.selection.file_tree = TreeState::from_items(&items);
+        self.selection.file_tree_gid = Some(selected_gid.clone());
+    }
+
     fn clear_snapshot(&mut self) {
         self.stats.global = None;
         self.downloads.items_by_gid.clear();
@@ -1376,6 +1427,8 @@ impl State {
         self.actions.pending = None;
         self.actions.feedback = None;
         self.selection.selected_gid = None;
+        self.selection.file_tree_gid = None;
+        self.selection.file_tree = TreeState::default();
     }
 
     fn can_pause(&self, gid: &Gid) -> bool {
@@ -1425,6 +1478,8 @@ impl State {
 
         if !self.downloads.items_by_gid.contains_key(selected_gid) {
             self.selection.selected_gid = None;
+            self.selection.file_tree_gid = None;
+            self.selection.file_tree = TreeState::default();
         }
     }
 }
@@ -1617,6 +1672,8 @@ struct ActionsState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SelectionState {
     selected_gid: Option<Gid>,
+    file_tree_gid: Option<Gid>,
+    file_tree: TreeState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1772,22 +1829,7 @@ fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
                 format_bytes(item.total_length_bytes())
             }
         ),
-        files: item
-            .files()
-            .iter()
-            .map(|file| {
-                format!(
-                    "{} | {} / {}",
-                    file.path(),
-                    format_bytes(file.completed_length_bytes()),
-                    if file.length_bytes() == 0 {
-                        "unknown".to_owned()
-                    } else {
-                        format_bytes(file.length_bytes())
-                    }
-                )
-            })
-            .collect(),
+        file_tree: download_file_tree(item),
         technical,
         torrent,
         error: item.command_error().map(str::to_owned),
@@ -1918,6 +1960,107 @@ fn relative_file_path<'a>(directory: &str, path: &'a str) -> Option<&'a str> {
 
     path.strip_prefix(directory)
         .and_then(|relative| relative.strip_prefix('/'))
+}
+
+fn download_file_tree(item: &DownloadItem) -> Vec<TreeNode> {
+    let mut roots = Vec::new();
+
+    for (index, file) in item.files().iter().enumerate() {
+        let display_path = display_file_path(item.directory(), file.path());
+        push_download_file(&mut roots, &display_path, file, index);
+    }
+
+    roots
+}
+
+fn display_file_path(directory: Option<&str>, path: &str) -> String {
+    if let Some(relative_path) = directory.and_then(|directory| relative_file_path(directory, path))
+    {
+        return relative_path.to_owned();
+    }
+
+    path.rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path)
+        .to_owned()
+}
+
+fn push_download_file(
+    roots: &mut Vec<TreeNode>,
+    display_path: &str,
+    file: &DownloadFile,
+    file_index: usize,
+) {
+    let components = display_path
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+
+    let Some((file_name, folders)) = components.split_last() else {
+        let label = file
+            .path()
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
+            .unwrap_or(file.path());
+        roots.push(file_node(file_index, display_path, label, file));
+        return;
+    };
+
+    let mut nodes = roots;
+    let mut path_prefix = String::new();
+    for (depth, folder) in folders.iter().enumerate() {
+        if !path_prefix.is_empty() {
+            path_prefix.push('/');
+        }
+        path_prefix.push_str(folder);
+        let folder_id = format!("folder:{path_prefix}");
+        let folder_node = folder_node_mut(nodes, folder_id, folder, depth == 0);
+        nodes = &mut folder_node.children;
+    }
+
+    nodes.push(file_node(file_index, display_path, file_name, file));
+}
+
+fn folder_node_mut<'a>(
+    nodes: &'a mut Vec<TreeNode>,
+    id: String,
+    label: &str,
+    initially_expanded: bool,
+) -> &'a mut TreeNode {
+    if let Some(index) = nodes.iter().position(|node| node.id.as_str() == id) {
+        return &mut nodes[index];
+    }
+
+    let mut node = TreeNode::branch(id, label.to_owned(), Vec::new());
+    node.initially_expanded = initially_expanded;
+    nodes.push(node);
+    let index = nodes.len().saturating_sub(1);
+    &mut nodes[index]
+}
+
+fn file_node(file_index: usize, display_path: &str, label: &str, file: &DownloadFile) -> TreeNode {
+    let mut node = TreeNode::leaf(
+        format!("file:{file_index}:{display_path}"),
+        label.to_owned(),
+    );
+    node.end = Some(format!(
+        "{} / {}",
+        format_bytes(file.completed_length_bytes()),
+        if file.length_bytes() == 0 {
+            "unknown".to_owned()
+        } else {
+            format_bytes(file.length_bytes())
+        }
+    ));
+    node
+}
+
+fn tree_node_exists(items: &[TreeNode], id: &str) -> bool {
+    items
+        .iter()
+        .any(|item| item.id.as_str() == id || tree_node_exists(&item.children, id))
 }
 
 fn file_count_label(count: usize) -> String {

@@ -1,7 +1,7 @@
 use iced::widget::svg;
 use iced::{Color, Element, Length, Theme};
 
-use crate::app::{FileIcon, Message};
+use crate::app::FileIcon;
 
 const ICON_ROOT: &str = "assets/icons/phosphor/regular";
 
@@ -13,6 +13,8 @@ pub enum Icon {
     ArrowUp,
     Audio,
     Back,
+    CaretDown,
+    CaretRight,
     CheckCircle,
     Clear,
     Cpu,
@@ -44,6 +46,8 @@ impl Icon {
             Self::ArrowUp => "arrow-up.svg",
             Self::Audio => "file-audio.svg",
             Self::Back => "arrow-left.svg",
+            Self::CaretDown => "caret-down.svg",
+            Self::CaretRight => "caret-right.svg",
             Self::CheckCircle => "check-circle.svg",
             Self::Clear => "x.svg",
             Self::Cpu => "cpu.svg",
@@ -84,7 +88,11 @@ impl From<FileIcon> for Icon {
     }
 }
 
-pub fn icon(icon: Icon, size: u16, color: fn(&Theme) -> Color) -> Element<'static, Message> {
+pub fn icon<Message: 'static>(
+    icon: Icon,
+    size: u16,
+    color: fn(&Theme) -> Color,
+) -> Element<'static, Message> {
     svg::Svg::from_path(format!("{ICON_ROOT}/{}", icon.file_name()))
         .width(Length::Fixed(f32::from(size)))
         .height(Length::Fixed(f32::from(size)))

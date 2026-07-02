@@ -8,6 +8,7 @@ use crate::config::RpcAuthDraft;
 use crate::config::Settings;
 use crate::config::ThemePreference;
 use crate::ui::overlay::PopoverId;
+use crate::ui::widgets::tree_list::TreeMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -19,6 +20,7 @@ pub enum Message {
     TogglePopover(PopoverId),
     ClosePopover,
     Selection(SelectionMessage),
+    Tree(TreeMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
     WindowResized { width: u32, height: u32 },

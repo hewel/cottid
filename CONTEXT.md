@@ -16,3 +16,23 @@ which contains error and complete downloads.
 
 A download whose aria2 file entries share one top-level folder. It is presented
 as a folder rather than as any one child file.
+
+## TreeList
+
+Reusable `iced` widget for hierarchical rows with expansion, selection,
+disabled state, density, optional leading/trailing text, and visual branch
+guides.
+
+## Branch guide
+
+Visual connector lines that show hierarchy between TreeList rows.
+
+## Canvas TreeList
+
+TreeList variant whose branch guides are drawn by `iced` Canvas while expansion
+and selection remain ordinary application state.
+
+## Download file tree
+
+TreeList data built from a selected download's normalized file paths. It is
+display-only UI state; aria2 remains the source of truth for file entries.

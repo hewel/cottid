@@ -295,11 +295,20 @@ pub(crate) fn stat_row(label: &'static str, value: &str) -> Element<'static, Mes
 }
 
 pub(crate) fn section(title: &'static str, rows: &[String]) -> Element<'static, Message> {
-    let mut content = column![text(title).size(13)].spacing(6);
+    let mut rows_content = column![].spacing(6);
 
     for row in rows {
-        content = content.push(text(row.to_owned()).size(12).style(theme::muted_text));
+        rows_content = rows_content.push(text(row.to_owned()).size(12).style(theme::muted_text));
     }
+
+    section_element(title, rows_content.into())
+}
+
+pub(crate) fn section_element(
+    title: &'static str,
+    body: Element<'static, Message>,
+) -> Element<'static, Message> {
+    let content = column![text(title).size(13), body].spacing(6);
 
     muted_panel(content).padding(10).width(Length::Fill).into()
 }

@@ -8,12 +8,13 @@ use crate::app::{
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
+use crate::ui::widgets::tree_list::{TreeDensity, TreeState, tree_list_owned};
 
 pub fn view(state: &State) -> Element<'_, Message> {
     if state.is_compact_layout()
         && let Some(detail) = state.selected_download_detail()
     {
-        return compact_detail(detail);
+        return compact_detail(detail, state.selected_file_tree_state().clone());
     }
 
     let list = list_panel(state);
@@ -21,11 +22,15 @@ pub fn view(state: &State) -> Element<'_, Message> {
     if let Some(detail) = state.selected_download_detail()
         && !state.is_compact_layout()
     {
-        return row![list, detail_panel(detail).width(Length::Fixed(316.0))]
-            .spacing(16)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
+        return row![
+            list,
+            detail_panel(detail, state.selected_file_tree_state().clone())
+                .width(Length::Fixed(316.0))
+        ]
+        .spacing(16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
     }
 
     list.into()
@@ -195,7 +200,10 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
         .into()
 }
 
-fn compact_detail(detail: DownloadDetailView) -> Element<'static, Message> {
+fn compact_detail(
+    detail: DownloadDetailView,
+    file_tree_state: TreeState,
+) -> Element<'static, Message> {
     container(
         column![
             row![
@@ -204,7 +212,7 @@ fn compact_detail(detail: DownloadDetailView) -> Element<'static, Message> {
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            detail_content(detail),
+            detail_content(detail, file_tree_state),
         ]
         .spacing(12),
     )
@@ -213,13 +221,19 @@ fn compact_detail(detail: DownloadDetailView) -> Element<'static, Message> {
     .into()
 }
 
-fn detail_panel(detail: DownloadDetailView) -> container::Container<'static, Message> {
-    ui::card_surface(detail_content(detail), false)
+fn detail_panel(
+    detail: DownloadDetailView,
+    file_tree_state: TreeState,
+) -> container::Container<'static, Message> {
+    ui::card_surface(detail_content(detail, file_tree_state), false)
         .padding(20)
         .height(Length::Fill)
 }
 
-fn detail_content(detail: DownloadDetailView) -> Element<'static, Message> {
+fn detail_content(
+    detail: DownloadDetailView,
+    file_tree_state: TreeState,
+) -> Element<'static, Message> {
     let mut content = column![
         row![
             ui::muted_panel(icon(
@@ -256,8 +270,14 @@ fn detail_content(detail: DownloadDetailView) -> Element<'static, Message> {
     if !detail.torrent().is_empty() {
         content = content.push(ui::section("Torrent", detail.torrent()));
     }
-    if !detail.files().is_empty() {
-        content = content.push(ui::section("Files", detail.files()));
+    if !detail.file_tree().is_empty() {
+        let file_tree = tree_list_owned(
+            detail.file_tree().to_vec(),
+            file_tree_state,
+            TreeDensity::Compact,
+        )
+        .map(Message::Tree);
+        content = content.push(ui::section_element("Files", file_tree));
     }
     if let Some(error) = detail.error() {
         content = content.push(

@@ -25,6 +25,10 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Selection(message) => update_selection(state, message),
+        Message::Tree(message) => {
+            state.update_file_tree(message);
+            Task::none()
+        }
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
         Message::WindowResized { width, height } => {

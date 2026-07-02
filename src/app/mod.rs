@@ -74,6 +74,7 @@ mod tests {
     use crate::aria2::notifications::Aria2Notification;
     use crate::config::{RpcAuthDraft, Settings, ThemePreference};
     use crate::ui::overlay::PopoverId;
+    use crate::ui::widgets::tree_list::TreeMessage;
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
@@ -993,7 +994,11 @@ mod tests {
         assert_eq!(detail.status(), "Active");
         assert_eq!(detail.progress(), "50% | 1.0 KiB / 2.0 KiB");
         assert_eq!(detail.speeds(), "Down 512 B/s | ETA 2s");
-        assert_eq!(detail.files()[0], "/tmp/active-gid.bin | 1.0 KiB / 2.0 KiB");
+        assert_eq!(detail.file_tree()[0].label, "active-gid.bin");
+        assert_eq!(
+            detail.file_tree()[0].end.as_deref(),
+            Some("1.0 KiB / 2.0 KiB")
+        );
     }
 
     #[test]
@@ -1107,6 +1112,132 @@ mod tests {
         assert_eq!(rows[0].name(), "Show Pack");
         assert_eq!(rows[0].file_icon(), FileIcon::Folder);
         assert_eq!(rows[0].metadata(), "3 files | Active | GID folder-gid");
+    }
+
+    #[test]
+    fn selected_folder_download_builds_file_tree() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_folder_item(
+                "folder-gid",
+                "/downloads",
+                [
+                    "/downloads/Show Pack/info.txt",
+                    "/downloads/Show Pack/extras/poster.png",
+                    "/downloads/Show Pack/video.mkv",
+                ],
+            )],
+        );
+
+        state.select_download(Gid::new("folder-gid").expect("valid gid"));
+
+        let detail = state.selected_download_detail().expect("selected detail");
+        let root = &detail.file_tree()[0];
+        assert_eq!(root.id, "folder:Show Pack");
+        assert_eq!(root.label, "Show Pack");
+        assert!(
+            state
+                .selected_file_tree_state()
+                .is_expanded("folder:Show Pack")
+        );
+        assert_eq!(root.children[0].label, "info.txt");
+        assert_eq!(root.children[1].label, "extras");
+        assert_eq!(root.children[1].children[0].label, "poster.png");
+        assert_eq!(root.children[2].label, "video.mkv");
+    }
+
+    #[test]
+    fn file_tree_selection_and_expansion_survive_same_download_refresh() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_folder_item(
+                "folder-gid",
+                "/downloads",
+                [
+                    "/downloads/Show Pack/info.txt",
+                    "/downloads/Show Pack/extras/poster.png",
+                ],
+            )],
+        );
+        state.select_download(Gid::new("folder-gid").expect("valid gid"));
+
+        state.update_file_tree(TreeMessage::Toggle("folder:Show Pack/extras".to_owned()));
+        state.update_file_tree(TreeMessage::Select(
+            "file:1:Show Pack/extras/poster.png".to_owned(),
+        ));
+        apply_snapshot(
+            &mut state,
+            vec![download_folder_item(
+                "folder-gid",
+                "/downloads",
+                [
+                    "/downloads/Show Pack/info.txt",
+                    "/downloads/Show Pack/extras/poster.png",
+                ],
+            )],
+        );
+
+        assert!(
+            state
+                .selected_file_tree_state()
+                .is_expanded("folder:Show Pack/extras")
+        );
+        assert!(
+            state
+                .selected_file_tree_state()
+                .is_selected("file:1:Show Pack/extras/poster.png")
+        );
+    }
+
+    #[test]
+    fn file_tree_state_resets_when_selected_download_changes() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_folder_item(
+                    "first-gid",
+                    "/downloads",
+                    [
+                        "/downloads/First/info.txt",
+                        "/downloads/First/extras/poster.png",
+                    ],
+                ),
+                download_folder_item(
+                    "second-gid",
+                    "/downloads",
+                    ["/downloads/Second/info.txt", "/downloads/Second/video.mkv"],
+                ),
+            ],
+        );
+        state.select_download(Gid::new("first-gid").expect("valid gid"));
+        state.update_file_tree(TreeMessage::Toggle("folder:First/extras".to_owned()));
+        state.update_file_tree(TreeMessage::Select(
+            "file:1:First/extras/poster.png".to_owned(),
+        ));
+
+        state.select_download(Gid::new("second-gid").expect("valid gid"));
+
+        assert!(
+            !state
+                .selected_file_tree_state()
+                .is_expanded("folder:First/extras")
+        );
+        assert!(
+            !state
+                .selected_file_tree_state()
+                .is_selected("file:1:First/extras/poster.png")
+        );
+        assert!(
+            state
+                .selected_file_tree_state()
+                .is_expanded("folder:Second")
+        );
     }
 
     #[test]
