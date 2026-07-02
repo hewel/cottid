@@ -32,14 +32,25 @@ pub(crate) fn app_tooltip<'a>(
     content: impl Into<String>,
     options: TooltipOptions,
 ) -> Element<'a, Message> {
+    app_tooltip_element(
+        trigger,
+        text(content.into()).size(TOKENS.typography.caption),
+        options,
+    )
+}
+
+pub(crate) fn app_tooltip_element<'a>(
+    trigger: impl Into<Element<'a, Message>>,
+    content: impl Into<Element<'a, Message>>,
+    options: TooltipOptions,
+) -> Element<'a, Message> {
     let trigger = trigger.into();
 
     if !options.enabled {
         return trigger;
     }
 
-    let tooltip_content = container(text(content.into()).size(TOKENS.typography.caption))
-        .max_width(options.max_width);
+    let tooltip_content = container(content).max_width(options.max_width);
 
     tooltip(
         trigger,

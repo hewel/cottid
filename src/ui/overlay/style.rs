@@ -3,10 +3,10 @@ use iced::{Background, Border, Color, Theme};
 
 use crate::ui::tokens::{TOKENS, mode_from_theme};
 
-pub(crate) fn tooltip_surface(_theme: &Theme) -> container::Style {
+pub(crate) fn tooltip_surface(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color::from_rgb8(23, 23, 23))),
-        text_color: Some(Color::from_rgb8(250, 250, 250)),
+        text_color: Some(tooltip_foreground(theme)),
         border: Border {
             radius: TOKENS.radius.element.into(),
             color: Color::TRANSPARENT,
@@ -15,6 +15,10 @@ pub(crate) fn tooltip_surface(_theme: &Theme) -> container::Style {
         shadow: TOKENS.shadow.low.light,
         ..container::Style::default()
     }
+}
+
+pub(crate) fn tooltip_foreground(_theme: &Theme) -> Color {
+    Color::from_rgb8(250, 250, 250)
 }
 
 pub(crate) fn popover_surface(theme: &Theme) -> container::Style {

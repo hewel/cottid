@@ -8,11 +8,13 @@ use crate::app::{
 use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
+use crate::ui::overlay::style as overlay_style;
 use crate::ui::overlay::{
     Alignment as OverlayAlignment, Placement, PopoverId, PopoverOptions, TooltipOptions,
-    app_popover, app_tooltip,
+    app_popover, app_tooltip, app_tooltip_element,
 };
 use crate::ui::theme;
+use crate::ui::tokens::TOKENS;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
 
 const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
@@ -186,13 +188,21 @@ fn connection_detail_content(state: &State) -> Element<'static, Message> {
 }
 
 fn connection_detail_popover(state: &State) -> Element<'_, Message> {
-    let trigger = ui::icon_button(Icon::Cpu, Message::TogglePopover(CONNECTION_DETAIL_POPOVER));
+    let is_open = state.is_popover_open(CONNECTION_DETAIL_POPOVER);
+    let trigger = app_tooltip_element(
+        ui::icon_button(Icon::Cpu, Message::TogglePopover(CONNECTION_DETAIL_POPOVER)),
+        connection_speed_tooltip(state),
+        TooltipOptions {
+            enabled: !is_open,
+            ..TooltipOptions::default()
+        },
+    );
 
     app_popover(
         CONNECTION_DETAIL_POPOVER,
         trigger,
         connection_detail_content(state),
-        state.is_popover_open(CONNECTION_DETAIL_POPOVER),
+        is_open,
         PopoverOptions {
             placement: Placement::Above,
             alignment: OverlayAlignment::Start,
@@ -201,6 +211,26 @@ fn connection_detail_popover(state: &State) -> Element<'_, Message> {
         },
         Message::ClosePopover,
     )
+}
+
+fn connection_speed_tooltip(state: &State) -> Element<'static, Message> {
+    row![
+        speed_tooltip_item(Icon::ArrowDown, state.download_speed_text()),
+        speed_tooltip_item(Icon::ArrowUp, state.upload_speed_text()),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn speed_tooltip_item(icon_kind: Icon, speed: String) -> Element<'static, Message> {
+    row![
+        icon(icon_kind, 12, overlay_style::tooltip_foreground),
+        text(speed).size(TOKENS.typography.caption),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn settings_icon_button() -> Element<'static, Message> {

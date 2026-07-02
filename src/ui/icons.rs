@@ -9,6 +9,8 @@ const ICON_ROOT: &str = "assets/icons/phosphor/regular";
 pub enum Icon {
     Add,
     Archive,
+    ArrowDown,
+    ArrowUp,
     Audio,
     Back,
     CheckCircle,
@@ -35,6 +37,8 @@ impl Icon {
         match self {
             Self::Add => "plus.svg",
             Self::Archive => "archive.svg",
+            Self::ArrowDown => "arrow-down.svg",
+            Self::ArrowUp => "arrow-up.svg",
             Self::Audio => "file-audio.svg",
             Self::Back => "arrow-left.svg",
             Self::CheckCircle => "check-circle.svg",

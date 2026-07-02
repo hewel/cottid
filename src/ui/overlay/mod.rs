@@ -6,4 +6,4 @@ pub(crate) mod tooltip;
 
 pub(crate) use placement::{Alignment, Placement};
 pub(crate) use popover::{PopoverId, PopoverOptions, PopoverState, app_popover};
-pub(crate) use tooltip::{TooltipOptions, app_tooltip};
+pub(crate) use tooltip::{TooltipOptions, app_tooltip, app_tooltip_element};
