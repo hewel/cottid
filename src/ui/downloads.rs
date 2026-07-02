@@ -1,12 +1,14 @@
-use iced::widget::{button, column, container, mouse_area, progress_bar, row, scrollable, text};
+use iced::widget::{column, container, mouse_area, progress_bar, row, scrollable, text};
 use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
     ActionMessage, AddMessage, DownloadDetailView, DownloadFilter, DownloadRowView,
     DownloadsMessage, Message, RefreshState, SelectionMessage, State,
 };
+use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
+use crate::ui::variants::ButtonVariant;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     if state.is_compact_layout()
@@ -57,10 +59,7 @@ fn header(state: &State) -> Element<'_, Message> {
             .align_y(Alignment::Center)
             .width(Length::Fill),
         search_box(),
-        button(icon(Icon::Add, 18, theme::text_color))
-            .style(theme::icon_button)
-            .padding(12)
-            .on_press(Message::Add(AddMessage::Open)),
+        ui::icon_button(Icon::Add, Message::Add(AddMessage::Open)).padding(12),
     ]
     .spacing(10)
     .align_y(Alignment::Center)
@@ -76,22 +75,23 @@ fn all_filter_chip(state: &State) -> Element<'_, Message> {
         format!("{} {}", filter.label(), state.filter_count(filter))
     };
 
-    button(text(label).size(14))
-        .style(if filter == DownloadFilter::All {
-            theme::selected_button
+    ui::text_button(
+        label,
+        if filter == DownloadFilter::All {
+            ButtonVariant::Selected
         } else {
-            theme::subtle_button
-        })
-        .padding([8, 12])
-        .on_press(Message::Downloads(DownloadsMessage::FilterChanged(
-            DownloadFilter::All,
-        )))
-        .into()
+            ButtonVariant::Subtle
+        },
+    )
+    .padding([8, 12])
+    .on_press(Message::Downloads(DownloadsMessage::FilterChanged(
+        DownloadFilter::All,
+    )))
+    .into()
 }
 
 fn search_box() -> Element<'static, Message> {
-    container(text("Search").size(14).style(theme::muted_text))
-        .style(theme::search_surface)
+    ui::search_surface(text("Search").size(14).style(theme::muted_text))
         .padding([11, 14])
         .width(Length::Fixed(238.0))
         .into()
@@ -100,7 +100,7 @@ fn search_box() -> Element<'static, Message> {
 fn stale_banner(state: &State) -> Element<'_, Message> {
     let message = state.refresh_feedback().unwrap_or("Refresh failed.");
 
-    container(
+    ui::muted_panel(
         row![
             icon(Icon::Error, 18, theme::warning_color),
             text(format!("Showing last successful refresh. {message}")).size(13),
@@ -108,22 +108,21 @@ fn stale_banner(state: &State) -> Element<'_, Message> {
         .spacing(8)
         .align_y(Alignment::Center),
     )
-    .style(theme::muted_surface)
     .padding(12)
     .width(Length::Fill)
     .into()
 }
 
 fn empty_state(message: String) -> Element<'static, Message> {
-    container(
+    ui::card_surface(
         column![
             icon(Icon::File, 28, theme::muted_color),
             text(message).size(14).style(theme::muted_text),
         ]
         .spacing(8)
         .align_x(Alignment::Center),
+        false,
     )
-    .style(theme::surface)
     .padding(24)
     .width(Length::Fill)
     .into()
@@ -133,21 +132,21 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
     let gid = row.gid_value();
     let mut actions = row![].spacing(6).align_y(Alignment::Center);
     if row.can_pause() {
-        actions = actions.push(action_button(
+        actions = actions.push(ui::action_button(
             Icon::Pause,
             Message::Action(ActionMessage::Pause(gid.clone())),
             false,
         ));
     }
     if row.can_unpause() {
-        actions = actions.push(action_button(
+        actions = actions.push(ui::action_button(
             Icon::Play,
             Message::Action(ActionMessage::Unpause(gid.clone())),
             false,
         ));
     }
     if row.can_remove() {
-        actions = actions.push(action_button(
+        actions = actions.push(ui::action_button(
             Icon::Trash,
             Message::Action(ActionMessage::Remove(gid.clone())),
             true,
@@ -162,9 +161,7 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
 
     let mut card_body = column![
         row![
-            container(icon(Icon::from(row.file_icon()), 24, theme::accent_color))
-                .style(theme::muted_surface)
-                .padding(12),
+            ui::muted_panel(icon(Icon::from(row.file_icon()), 24, theme::accent_color)).padding(12),
             column![
                 text(row.name().to_owned()).size(17),
                 text(format!("{} | GID {}", row.status(), row.gid()))
@@ -211,45 +208,17 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
     .spacing(10)
     .align_y(Alignment::Start);
 
-    container(body)
-        .style(if row.selected() {
-            theme::selected_surface
-        } else {
-            theme::surface
-        })
+    ui::card_surface(body, row.selected())
         .padding(18)
         .width(Length::Fill)
         .into()
-}
-
-fn action_button(icon_kind: Icon, message: Message, danger: bool) -> Element<'static, Message> {
-    button(icon(
-        icon_kind,
-        16,
-        if danger {
-            theme::danger_color
-        } else {
-            theme::text_color
-        },
-    ))
-    .style(if danger {
-        theme::danger_button
-    } else {
-        theme::icon_button
-    })
-    .padding(10)
-    .on_press(message)
-    .into()
 }
 
 fn compact_detail(detail: DownloadDetailView) -> Element<'static, Message> {
     container(
         column![
             row![
-                button(icon(Icon::Back, 16, theme::text_color))
-                    .style(theme::icon_button)
-                    .padding(10)
-                    .on_press(Message::Selection(SelectionMessage::Clear)),
+                ui::icon_button(Icon::Back, Message::Selection(SelectionMessage::Clear)),
                 text(detail.name().to_owned()).size(20),
             ]
             .spacing(10)
@@ -264,8 +233,7 @@ fn compact_detail(detail: DownloadDetailView) -> Element<'static, Message> {
 }
 
 fn detail_panel(detail: DownloadDetailView) -> container::Container<'static, Message> {
-    container(detail_content(detail))
-        .style(theme::surface)
+    ui::card_surface(detail_content(detail), false)
         .padding(20)
         .height(Length::Fill)
 }
@@ -273,12 +241,11 @@ fn detail_panel(detail: DownloadDetailView) -> container::Container<'static, Mes
 fn detail_content(detail: DownloadDetailView) -> Element<'static, Message> {
     let mut content = column![
         row![
-            container(icon(
+            ui::muted_panel(icon(
                 Icon::from(detail.file_icon()),
                 32,
                 theme::accent_color
             ))
-            .style(theme::muted_surface)
             .padding(16),
             column![
                 text(detail.name().to_owned()).size(20),
@@ -288,32 +255,28 @@ fn detail_content(detail: DownloadDetailView) -> Element<'static, Message> {
             ]
             .spacing(4)
             .width(Length::Fill),
-            button(icon(Icon::Clear, 16, theme::text_color))
-                .style(theme::icon_button)
-                .padding(10)
-                .on_press(Message::Selection(SelectionMessage::Clear)),
+            ui::icon_button(Icon::Clear, Message::Selection(SelectionMessage::Clear)),
         ]
         .spacing(12)
         .align_y(Alignment::Center),
-        stat_row("Status", detail.status()),
-        stat_row("Progress", detail.progress()),
-        stat_row("Speed", detail.speeds()),
-        stat_row("Totals", detail.totals()),
-        detail_actions(&detail),
+        ui::stat_row("Status", detail.status()),
+        ui::stat_row("Progress", detail.progress()),
+        ui::stat_row("Speed", detail.speeds()),
+        ui::stat_row("Totals", detail.totals()),
     ]
     .spacing(12);
 
     if let Some(directory) = detail.directory() {
-        content = content.push(stat_row("Directory", directory));
+        content = content.push(ui::stat_row("Directory", directory));
     }
     if !detail.technical().is_empty() {
-        content = content.push(section("Technical", detail.technical()));
+        content = content.push(ui::section("Technical", detail.technical()));
     }
     if !detail.torrent().is_empty() {
-        content = content.push(section("Torrent", detail.torrent()));
+        content = content.push(ui::section("Torrent", detail.torrent()));
     }
     if !detail.files().is_empty() {
-        content = content.push(section("Files", detail.files()));
+        content = content.push(ui::section("Files", detail.files()));
     }
     if let Some(error) = detail.error() {
         content = content.push(
@@ -327,72 +290,4 @@ fn detail_content(detail: DownloadDetailView) -> Element<'static, Message> {
     }
 
     scrollable(content).height(Length::Fill).into()
-}
-
-fn detail_actions(detail: &DownloadDetailView) -> Element<'static, Message> {
-    let mut actions = column![].spacing(8);
-
-    if detail.can_pause() {
-        actions = actions.push(
-            button(text("Pause").size(15))
-                .style(theme::primary_button)
-                .padding([12, 16])
-                .width(Length::Fill)
-                .on_press(Message::Action(ActionMessage::Pause(detail.gid_value()))),
-        );
-    }
-
-    if detail.can_unpause() {
-        actions = actions.push(
-            button(text("Resume").size(15))
-                .style(theme::primary_button)
-                .padding([12, 16])
-                .width(Length::Fill)
-                .on_press(Message::Action(ActionMessage::Unpause(detail.gid_value()))),
-        );
-    }
-
-    if detail.can_remove() {
-        actions = actions.push(
-            button(text("Delete").size(15))
-                .style(theme::danger_button)
-                .padding([12, 16])
-                .width(Length::Fill)
-                .on_press(Message::Action(ActionMessage::Remove(detail.gid_value()))),
-        );
-    }
-
-    actions.into()
-}
-
-fn stat_row(label: &'static str, value: &str) -> Element<'static, Message> {
-    container(
-        row![
-            text(label)
-                .size(12)
-                .style(theme::muted_text)
-                .width(Length::Fill),
-            text(value.to_owned()).size(13),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center),
-    )
-    .style(theme::muted_surface)
-    .padding(10)
-    .width(Length::Fill)
-    .into()
-}
-
-fn section(title: &'static str, rows: &[String]) -> Element<'static, Message> {
-    let mut content = column![text(title).size(13)].spacing(6);
-
-    for row in rows {
-        content = content.push(text(row.to_owned()).size(12).style(theme::muted_text));
-    }
-
-    container(content)
-        .style(theme::muted_surface)
-        .padding(10)
-        .width(Length::Fill)
-        .into()
 }

@@ -15,6 +15,27 @@ or depend on raw aria2 JSON-RPC DTOs.
   raw aria2 data.
 - No extra UI dependency may be added without explicit approval.
 
+## Theme Architecture
+
+The UI theme is layered so visual choices can change without rewriting view
+logic:
+
+- `src/ui/tokens.rs` defines semantic Rust design tokens.
+- `src/ui/variants.rs` defines the small set of button, surface, text, input,
+  progress, and feedback variants currently used by the app.
+- `src/ui/theme.rs` adapts those tokens and variants into `iced` style
+  functions.
+- `src/ui/components.rs` exposes UI-internal wrappers for repeated controls and
+  surfaces.
+
+View modules should prefer component wrappers for repeated app controls such as
+cards, feedback banners, text buttons, icon buttons, and form inputs. Direct
+`iced` widgets remain fine for one-off layout composition.
+
+The token names are semantic, not CSS names. External CSS theme systems can
+inform the palette and variant vocabulary, but Rust views should depend on the
+local tokens and variants only.
+
 ## Root Layout
 
 Use a stable desktop shell:

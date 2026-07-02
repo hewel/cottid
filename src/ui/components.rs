@@ -1,0 +1,178 @@
+use iced::widget::{button, column, container, row, text, text_input};
+use iced::{Alignment, Element, Length};
+
+use crate::app::{FeedbackTone, FormFeedback, Message};
+use crate::ui::icons::{Icon, icon};
+use crate::ui::theme;
+use crate::ui::variants::{ButtonVariant, FeedbackVariant, SurfaceVariant};
+
+pub(crate) fn surface<'a>(
+    content: impl Into<Element<'a, Message>>,
+    variant: SurfaceVariant,
+) -> container::Container<'a, Message> {
+    container(content).style(move |theme| theme::surface_variant(theme, variant))
+}
+
+pub(crate) fn app_surface<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    surface(content, SurfaceVariant::App)
+}
+
+pub(crate) fn sidebar_surface<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    surface(content, SurfaceVariant::Sidebar)
+}
+
+pub(crate) fn card_surface<'a>(
+    content: impl Into<Element<'a, Message>>,
+    selected: bool,
+) -> container::Container<'a, Message> {
+    let variant = if selected {
+        SurfaceVariant::SelectedCard
+    } else {
+        SurfaceVariant::Card
+    };
+
+    surface(content, variant)
+}
+
+pub(crate) fn muted_panel<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    surface(content, SurfaceVariant::Muted)
+}
+
+pub(crate) fn modal_surface<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    surface(content, SurfaceVariant::Modal)
+}
+
+pub(crate) fn search_surface<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
+    surface(content, SurfaceVariant::Search)
+}
+
+pub(crate) fn icon_button(icon_kind: Icon, message: Message) -> button::Button<'static, Message> {
+    button(icon(icon_kind, 18, theme::text_color))
+        .padding(10)
+        .style(theme::icon_button)
+        .on_press(message)
+}
+
+pub(crate) fn action_button(
+    icon_kind: Icon,
+    message: Message,
+    danger: bool,
+) -> Element<'static, Message> {
+    let color = if danger {
+        theme::danger_color
+    } else {
+        theme::text_color
+    };
+    let style = if danger {
+        theme::danger_button
+    } else {
+        theme::icon_button
+    };
+
+    button(icon(icon_kind, 16, color))
+        .style(style)
+        .padding(10)
+        .on_press(message)
+        .into()
+}
+
+pub(crate) fn text_button(
+    label: impl Into<String>,
+    variant: ButtonVariant,
+) -> button::Button<'static, Message> {
+    button(text(label.into()))
+        .style(move |theme, status| theme::button_variant(theme, status, variant))
+}
+
+pub(crate) fn form_input<'a>(
+    placeholder: &str,
+    value: &str,
+    on_input: impl Fn(String) -> Message + 'a,
+) -> text_input::TextInput<'a, Message> {
+    text_input(placeholder, value)
+        .on_input(on_input)
+        .padding(10)
+        .style(theme::form_text_input)
+}
+
+pub(crate) fn feedback_or_info(
+    feedback: Option<&FormFeedback>,
+    fallback: &'static str,
+) -> Element<'static, Message> {
+    feedback
+        .map(form_feedback_banner)
+        .unwrap_or_else(|| feedback_banner(FeedbackTone::Info, fallback))
+}
+
+pub(crate) fn form_feedback_banner(feedback: &FormFeedback) -> Element<'static, Message> {
+    feedback_banner(feedback.tone(), feedback.message())
+}
+
+pub(crate) fn feedback_banner(tone: FeedbackTone, message: &str) -> Element<'static, Message> {
+    let (icon_kind, variant) = feedback_variant(tone);
+    let color = match variant {
+        FeedbackVariant::Info => theme::feedback_info_color,
+        FeedbackVariant::Success => theme::feedback_success_color,
+        FeedbackVariant::Warning => theme::feedback_warning_color,
+        FeedbackVariant::Error => theme::feedback_error_color,
+    };
+
+    surface(
+        row![
+            icon(icon_kind, 16, color),
+            text(message.to_owned()).size(12),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        SurfaceVariant::Feedback(variant),
+    )
+    .padding([10, 12])
+    .width(Length::Fill)
+    .into()
+}
+
+pub(crate) fn stat_row(label: &'static str, value: &str) -> Element<'static, Message> {
+    muted_panel(
+        row![
+            text(label)
+                .size(12)
+                .style(theme::muted_text)
+                .width(Length::Fill),
+            text(value.to_owned()).size(13),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .padding(10)
+    .width(Length::Fill)
+    .into()
+}
+
+pub(crate) fn section(title: &'static str, rows: &[String]) -> Element<'static, Message> {
+    let mut content = column![text(title).size(13)].spacing(6);
+
+    for row in rows {
+        content = content.push(text(row.to_owned()).size(12).style(theme::muted_text));
+    }
+
+    muted_panel(content).padding(10).width(Length::Fill).into()
+}
+
+fn feedback_variant(tone: FeedbackTone) -> (Icon, FeedbackVariant) {
+    match tone {
+        FeedbackTone::Info => (Icon::Info, FeedbackVariant::Info),
+        FeedbackTone::Success => (Icon::CheckCircle, FeedbackVariant::Success),
+        FeedbackTone::Warning => (Icon::Error, FeedbackVariant::Warning),
+        FeedbackTone::Error => (Icon::XCircle, FeedbackVariant::Error),
+    }
+}

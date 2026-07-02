@@ -1,13 +1,15 @@
-use iced::widget::{button, column, container, row, space, text, text_input};
+use iced::widget::{button, column, container, row, space, text};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
-    ActionMessage, AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, FeedbackTone,
-    FormFeedback, Message, SettingsMessage, State, ToolbarMessage,
+    ActionMessage, AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message,
+    SettingsMessage, State, ToolbarMessage,
 };
 use crate::config::{RpcAuthDraft, ThemePreference};
+use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
+use crate::ui::variants::ButtonVariant;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
@@ -36,8 +38,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
         shell = shell.push(add_modal(state));
     }
 
-    container(shell)
-        .style(theme::app_background)
+    ui::app_surface(shell)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -54,9 +55,7 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
     } else {
         column![
             row![
-                container(text("C").size(16))
-                    .style(theme::muted_surface)
-                    .padding([6, 9]),
+                ui::muted_panel(text("C").size(16)).padding([6, 9]),
                 text("Cottid").size(24),
             ]
             .spacing(8)
@@ -115,8 +114,7 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill);
 
-    container(content)
-        .style(theme::sidebar)
+    ui::sidebar_surface(content)
         .padding(18)
         .height(Length::Fill)
 }
@@ -147,7 +145,7 @@ fn nav_button(
 }
 
 fn connection_status_card(state: &State) -> Element<'_, Message> {
-    container(
+    ui::muted_panel(
         column![
             text("Connection").size(12).style(theme::muted_text),
             text(state.status_text()).size(13),
@@ -167,17 +165,16 @@ fn connection_status_card(state: &State) -> Element<'_, Message> {
         ]
         .spacing(4),
     )
-    .style(theme::muted_surface)
     .padding(12)
     .width(Length::Fill)
     .into()
 }
 
 fn settings_icon_button() -> button::Button<'static, Message> {
-    button(icon(Icon::Settings, 18, theme::text_color))
-        .padding(10)
-        .style(theme::subtle_button)
-        .on_press(Message::Toolbar(ToolbarMessage::OpenSettings))
+    ui::icon_button(
+        Icon::Settings,
+        Message::Toolbar(ToolbarMessage::OpenSettings),
+    )
 }
 
 fn filter_button(
@@ -209,45 +206,43 @@ fn filter_button(
 }
 
 fn add_modal(state: &State) -> Element<'_, Message> {
-    let input = text_input(
+    let input = ui::form_input(
         "https://example.com/file.iso or magnet:?",
         state.add_input(),
-    )
-    .on_input(|value| Message::Add(AddMessage::InputChanged(value)))
-    .padding(10)
-    .style(theme::form_text_input);
+        |value| Message::Add(AddMessage::InputChanged(value)),
+    );
 
     let submit = if state.is_add_ready() {
-        button(text(if state.is_add_pending() {
-            "Adding"
-        } else {
-            "Add download"
-        }))
-        .style(theme::primary_button)
+        ui::text_button(
+            if state.is_add_pending() {
+                "Adding"
+            } else {
+                "Add download"
+            },
+            ButtonVariant::Primary,
+        )
         .on_press(Message::Add(AddMessage::Submit))
     } else {
-        button(text(if state.is_add_pending() {
-            "Adding"
-        } else {
-            "Add download"
-        }))
-        .style(theme::primary_button)
+        ui::text_button(
+            if state.is_add_pending() {
+                "Adding"
+            } else {
+                "Add download"
+            },
+            ButtonVariant::Primary,
+        )
     };
 
-    let add_feedback = state
-        .add_feedback()
-        .map(form_feedback_banner)
-        .unwrap_or_else(|| feedback_banner(FeedbackTone::Info, "Enter one URI or magnet link."));
+    let add_feedback = ui::feedback_or_info(state.add_feedback(), "Enter one URI or magnet link.");
 
-    container(
+    ui::modal_surface(
         column![
             text("Add Download").size(20),
             input,
             add_feedback,
             row![
                 submit,
-                button("Cancel")
-                    .style(theme::subtle_button)
+                ui::text_button("Cancel", ButtonVariant::Subtle)
                     .on_press(Message::Add(AddMessage::Cancel)),
             ]
             .spacing(8)
@@ -255,27 +250,26 @@ fn add_modal(state: &State) -> Element<'_, Message> {
         ]
         .spacing(10),
     )
-    .style(theme::surface)
     .padding(18)
     .width(Length::Fill)
     .into()
 }
 
 fn settings_modal(state: &State) -> Element<'_, Message> {
-    let endpoint = text_input("http://localhost:6800/jsonrpc", state.draft_endpoint())
-        .on_input(|value| Message::Settings(SettingsMessage::EndpointChanged(value)))
-        .padding(10)
-        .style(theme::form_text_input);
+    let endpoint = ui::form_input(
+        "http://localhost:6800/jsonrpc",
+        state.draft_endpoint(),
+        |value| Message::Settings(SettingsMessage::EndpointChanged(value)),
+    );
 
-    let polling = text_input("2", &state.draft_polling_interval_seconds().to_string())
-        .on_input(|value| Message::Settings(SettingsMessage::PollingIntervalChanged(value)))
-        .padding(10)
-        .style(theme::form_text_input);
+    let polling_value = state.draft_polling_interval_seconds().to_string();
+    let polling = ui::form_input("2", &polling_value, |value| {
+        Message::Settings(SettingsMessage::PollingIntervalChanged(value))
+    });
 
-    let secret = text_input("Session token", state.draft_secret())
-        .on_input(|value| Message::Settings(SettingsMessage::SecretChanged(value)))
-        .padding(10)
-        .style(theme::form_text_input);
+    let secret = ui::form_input("Session token", state.draft_secret(), |value| {
+        Message::Settings(SettingsMessage::SecretChanged(value))
+    });
 
     let auth_row = row![
         auth_button(
@@ -308,10 +302,8 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
             .push(secret);
     }
 
-    let settings_feedback = state
-        .settings_feedback()
-        .map(form_feedback_banner)
-        .unwrap_or_else(|| feedback_banner(FeedbackTone::Info, "Settings are not persisted yet."));
+    let settings_feedback =
+        ui::feedback_or_info(state.settings_feedback(), "Settings are not persisted yet.");
 
     fields = fields
         .push(text("Polling interval").size(12).style(theme::muted_text))
@@ -319,14 +311,11 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         .push(settings_feedback);
 
     let mut actions = row![
-        button("Test Connection")
-            .style(theme::subtle_button)
+        ui::text_button("Test Connection", ButtonVariant::Subtle)
             .on_press(Message::Connection(ConnectionMessage::TestRequested)),
-        button("Save")
-            .style(theme::primary_button)
+        ui::text_button("Save", ButtonVariant::Primary)
             .on_press(Message::Settings(SettingsMessage::Save)),
-        button("Cancel")
-            .style(theme::subtle_button)
+        ui::text_button("Cancel", ButtonVariant::Subtle)
             .on_press(Message::Settings(SettingsMessage::Cancel)),
     ]
     .spacing(8)
@@ -335,19 +324,16 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
     if state.is_plaintext_fallback_pending() {
         actions = actions
             .push(
-                button("Save Plaintext")
-                    .style(theme::subtle_button)
+                ui::text_button("Save Plaintext", ButtonVariant::Subtle)
                     .on_press(Message::Settings(SettingsMessage::SavePlaintextFallback)),
             )
             .push(
-                button("Session Only")
-                    .style(theme::subtle_button)
+                ui::text_button("Session Only", ButtonVariant::Subtle)
                     .on_press(Message::Settings(SettingsMessage::KeepSecretSessionOnly)),
             );
     }
 
-    container(column![fields, actions].spacing(16))
-        .style(theme::surface)
+    ui::modal_surface(column![fields, actions].spacing(16))
         .padding(18)
         .width(Length::Fill)
         .into()
@@ -364,55 +350,15 @@ fn auth_button(
         label.to_owned()
     };
 
-    button(text(label))
-        .style(if auth == selected {
-            theme::selected_button
+    ui::text_button(
+        label,
+        if auth == selected {
+            ButtonVariant::Selected
         } else {
-            theme::subtle_button
-        })
-        .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
-        .into()
-}
-
-fn form_feedback_banner(feedback: &FormFeedback) -> Element<'static, Message> {
-    feedback_banner(feedback.tone(), feedback.message())
-}
-
-fn feedback_banner(tone: FeedbackTone, message: &str) -> Element<'static, Message> {
-    let (icon_kind, color, surface) = match tone {
-        FeedbackTone::Info => (
-            Icon::Info,
-            theme::feedback_info_color as fn(&iced::Theme) -> iced::Color,
-            theme::feedback_info_surface as fn(&iced::Theme) -> container::Style,
-        ),
-        FeedbackTone::Success => (
-            Icon::CheckCircle,
-            theme::feedback_success_color as fn(&iced::Theme) -> iced::Color,
-            theme::feedback_success_surface as fn(&iced::Theme) -> container::Style,
-        ),
-        FeedbackTone::Warning => (
-            Icon::Error,
-            theme::feedback_warning_color as fn(&iced::Theme) -> iced::Color,
-            theme::feedback_warning_surface as fn(&iced::Theme) -> container::Style,
-        ),
-        FeedbackTone::Error => (
-            Icon::XCircle,
-            theme::feedback_error_color as fn(&iced::Theme) -> iced::Color,
-            theme::feedback_error_surface as fn(&iced::Theme) -> container::Style,
-        ),
-    };
-
-    container(
-        row![
-            icon(icon_kind, 16, color),
-            text(message.to_owned()).size(12),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+            ButtonVariant::Subtle
+        },
     )
-    .style(surface)
-    .padding([10, 12])
-    .width(Length::Fill)
+    .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
     .into()
 }
 
@@ -436,15 +382,17 @@ fn theme_button(
         preference.label().to_owned()
     };
 
-    button(text(label))
-        .style(if preference == selected {
-            theme::selected_button
+    ui::text_button(
+        label,
+        if preference == selected {
+            ButtonVariant::Selected
         } else {
-            theme::subtle_button
-        })
-        .on_press(Message::Settings(SettingsMessage::ThemePreferenceChanged(
-            preference,
-        )))
+            ButtonVariant::Subtle
+        },
+    )
+    .on_press(Message::Settings(SettingsMessage::ThemePreferenceChanged(
+        preference,
+    )))
 }
 
 fn connection_label(status: ConnectionStatus) -> &'static str {

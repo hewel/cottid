@@ -224,16 +224,12 @@ impl DownloadRowView {
 pub struct DownloadDetailView {
     name: String,
     gid: String,
-    gid_value: Gid,
     file_icon: FileIcon,
     status: String,
     directory: Option<String>,
     progress: String,
     speeds: String,
     totals: String,
-    can_pause: bool,
-    can_unpause: bool,
-    can_remove: bool,
     technical: Vec<String>,
     torrent: Vec<String>,
     files: Vec<String>,
@@ -247,10 +243,6 @@ impl DownloadDetailView {
 
     pub fn gid(&self) -> &str {
         &self.gid
-    }
-
-    pub fn gid_value(&self) -> Gid {
-        self.gid_value.clone()
     }
 
     pub fn file_icon(&self) -> FileIcon {
@@ -275,18 +267,6 @@ impl DownloadDetailView {
 
     pub fn totals(&self) -> &str {
         &self.totals
-    }
-
-    pub fn can_pause(&self) -> bool {
-        self.can_pause
-    }
-
-    pub fn can_unpause(&self) -> bool {
-        self.can_unpause
-    }
-
-    pub fn can_remove(&self) -> bool {
-        self.can_remove
     }
 
     pub fn technical(&self) -> &[String] {
@@ -555,7 +535,7 @@ impl State {
         self.downloads
             .items_by_gid
             .get(selected_gid)
-            .map(|record| download_detail_view(record, &self.actions))
+            .map(download_detail_view)
     }
 
     pub fn can_purge_stopped(&self) -> bool {
@@ -1596,10 +1576,9 @@ fn download_row_view(
     }
 }
 
-fn download_detail_view(record: &DownloadRecord, actions: &ActionsState) -> DownloadDetailView {
+fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
     let item = &record.item;
     let detail = record.detail.as_ref();
-    let action_available = actions.pending.is_none();
     let mut technical = Vec::new();
     let mut torrent = Vec::new();
 
@@ -1638,7 +1617,6 @@ fn download_detail_view(record: &DownloadRecord, actions: &ActionsState) -> Down
     DownloadDetailView {
         name: download_name(item),
         gid: item.gid().as_str().to_owned(),
-        gid_value: item.gid().clone(),
         file_icon: file_icon_for_item(item),
         status: item.status().display_label().to_owned(),
         directory: detail
@@ -1671,17 +1649,6 @@ fn download_detail_view(record: &DownloadRecord, actions: &ActionsState) -> Down
                 )
             })
             .collect(),
-        can_pause: action_available && matches!(item.status(), DownloadStatus::Active),
-        can_unpause: action_available
-            && matches!(
-                item.status(),
-                DownloadStatus::Paused | DownloadStatus::Waiting
-            ),
-        can_remove: action_available
-            && !matches!(
-                item.status(),
-                DownloadStatus::Complete | DownloadStatus::Removed
-            ),
         technical,
         torrent,
         error: item.command_error().map(str::to_owned),
