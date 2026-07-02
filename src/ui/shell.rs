@@ -205,14 +205,9 @@ fn filter_button(
         .spacing(8)
         .align_y(Alignment::Center)
     };
-    let button = button(content)
+    let button = ui::toggle_button(content, selected)
         .padding([9, 12])
-        .width(Length::Fill)
-        .style(if selected {
-            theme::selected_button
-        } else {
-            theme::subtle_button
-        });
+        .width(Length::Fill);
 
     button.on_press(message()).into()
 }
@@ -356,19 +351,7 @@ fn auth_button(
     auth: RpcAuthDraft,
     selected: RpcAuthDraft,
 ) -> Element<'static, Message> {
-    let label = if auth == selected {
-        format!("{label} selected")
-    } else {
-        label.to_owned()
-    };
-
-    let button = if auth == selected {
-        ui::selected_text_button(label)
-    } else {
-        ui::text_button(label, ButtonVariant::Secondary)
-    };
-
-    button
+    ui::toggle_text_button(label, auth == selected)
         .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
         .into()
 }
@@ -387,21 +370,10 @@ fn theme_button(
     preference: ThemePreference,
     selected: ThemePreference,
 ) -> button::Button<'static, Message> {
-    let label = if preference == selected {
-        format!("{} selected", preference.label())
-    } else {
-        preference.label().to_owned()
-    };
-
-    let button = if preference == selected {
-        ui::selected_text_button(label)
-    } else {
-        ui::text_button(label, ButtonVariant::Secondary)
-    };
-
-    button.on_press(Message::Settings(SettingsMessage::ThemePreferenceChanged(
-        preference,
-    )))
+    let label = preference.label();
+    ui::toggle_text_button(label, preference == selected).on_press(Message::Settings(
+        SettingsMessage::ThemePreferenceChanged(preference),
+    ))
 }
 
 fn connection_label(status: ConnectionStatus) -> &'static str {

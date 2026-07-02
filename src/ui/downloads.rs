@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, mouse_area, progress_bar, row, scrollable, text};
+use iced::widget::{column, container, mouse_area, progress_bar, row, scrollable, text};
 use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
@@ -84,11 +84,8 @@ fn all_filter_chip(state: &State) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let button = if filter == DownloadFilter::All {
-        button(content).style(theme::selected_button)
-    } else {
-        button(content).style(theme::subtle_button)
-    };
+    let selected = filter == DownloadFilter::All;
+    let button = ui::toggle_button(content, selected);
 
     button
         .padding([8, 12])

@@ -136,10 +136,6 @@ pub fn subtle_button(theme: &Theme, status: button::Status) -> button::Style {
     button_variant(theme, status, ButtonVariant::Secondary)
 }
 
-pub fn selected_button(theme: &Theme, status: button::Status) -> button::Style {
-    widgets::button::selected(theme, status)
-}
-
 pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     button_variant(theme, status, ButtonVariant::Ghost)
 }

@@ -125,8 +125,24 @@ pub(crate) fn text_button(
         .style(move |theme, status| theme::button_variant(theme, status, variant))
 }
 
-pub(crate) fn selected_text_button(label: impl Into<String>) -> button::Button<'static, Message> {
-    button(text(label.into())).style(theme::selected_button)
+pub(crate) fn toggle_button<'a>(
+    content: impl Into<Element<'a, Message>>,
+    selected: bool,
+) -> button::Button<'a, Message> {
+    let variant = if selected {
+        ButtonVariant::Secondary
+    } else {
+        ButtonVariant::Ghost
+    };
+
+    button(content).style(move |theme, status| theme::button_variant(theme, status, variant))
+}
+
+pub(crate) fn toggle_text_button(
+    label: impl Into<String>,
+    selected: bool,
+) -> button::Button<'static, Message> {
+    toggle_button(text(label.into()), selected)
 }
 
 pub(crate) fn form_input<'a>(

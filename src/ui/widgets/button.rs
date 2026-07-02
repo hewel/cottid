@@ -85,23 +85,6 @@ pub(crate) fn style(
     }
 }
 
-pub(crate) fn selected(theme: &Theme, status: button::Status) -> button::Style {
-    let mode = mode_from_theme(theme);
-    let background = match status {
-        button::Status::Hovered | button::Status::Pressed => {
-            TOKENS.colors.badge_neutral_background.get(mode)
-        }
-        button::Status::Active | button::Status::Disabled => TOKENS.colors.accent_muted.get(mode),
-    };
-
-    button_style(
-        Some(background),
-        TOKENS.colors.text_primary.get(mode),
-        TOKENS.colors.accent.get(mode),
-        TOKENS.radius.element,
-    )
-}
-
 fn button_style(
     background: Option<Color>,
     text_color: Color,
@@ -149,5 +132,17 @@ mod tests {
             style.background,
             Some(Background::Color(Color::from_rgb8(38, 38, 38)))
         );
+    }
+
+    #[test]
+    fn style_leaves_ghost_button_without_visible_outline() {
+        let style = super::style(
+            &iced::Theme::Light,
+            ButtonVariant::Ghost,
+            iced::widget::button::Status::Active,
+        );
+
+        assert_eq!(style.background, None);
+        assert_eq!(style.border.color, Color::TRANSPARENT);
     }
 }
