@@ -11,12 +11,14 @@ pub enum Icon {
     Archive,
     Audio,
     Back,
+    CheckCircle,
     Clear,
     Document,
     Error,
     Executable,
     File,
     Image,
+    Info,
     Pause,
     Play,
     Purge,
@@ -24,6 +26,7 @@ pub enum Icon {
     Trash,
     Torrent,
     Video,
+    XCircle,
 }
 
 impl Icon {
@@ -33,12 +36,14 @@ impl Icon {
             Self::Archive => "archive.svg",
             Self::Audio => "file-audio.svg",
             Self::Back => "arrow-left.svg",
+            Self::CheckCircle => "check-circle.svg",
             Self::Clear => "x.svg",
             Self::Document => "file-text.svg",
             Self::Error => "warning-circle.svg",
             Self::Executable => "file-code.svg",
             Self::File => "file.svg",
             Self::Image => "file-image.svg",
+            Self::Info => "info.svg",
             Self::Pause => "pause.svg",
             Self::Play => "play.svg",
             Self::Purge => "broom.svg",
@@ -46,6 +51,7 @@ impl Icon {
             Self::Trash => "trash.svg",
             Self::Torrent => "cloud-arrow-down.svg",
             Self::Video => "file-video.svg",
+            Self::XCircle => "x-circle.svg",
         }
     }
 }

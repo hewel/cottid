@@ -1,4 +1,4 @@
-use iced::widget::{button, container, progress_bar, text};
+use iced::widget::{button, container, progress_bar, text, text_input};
 use iced::{Background, Border, Color, Theme};
 
 const CARD_RADIUS: f32 = 10.0;
@@ -21,6 +21,7 @@ struct Palette {
     danger: Color,
     danger_soft: Color,
     warning: Color,
+    warning_soft: Color,
 }
 
 fn palette(theme: &Theme) -> Palette {
@@ -41,6 +42,7 @@ fn palette(theme: &Theme) -> Palette {
             danger: Color::from_rgb8(251, 113, 133),
             danger_soft: Color::from_rgb8(74, 39, 54),
             warning: Color::from_rgb8(251, 191, 36),
+            warning_soft: Color::from_rgb8(79, 62, 30),
         }
     } else {
         Palette {
@@ -59,6 +61,7 @@ fn palette(theme: &Theme) -> Palette {
             danger: Color::from_rgb8(220, 38, 38),
             danger_soft: Color::from_rgb8(254, 226, 226),
             warning: Color::from_rgb8(217, 119, 6),
+            warning_soft: Color::from_rgb8(254, 243, 199),
         }
     }
 }
@@ -243,6 +246,96 @@ pub fn progress(theme: &Theme) -> progress_bar::Style {
         background: Background::Color(palette.surface_muted),
         bar: Background::Color(palette.accent),
         border: border(6.0, palette.surface_muted, 0.0),
+    }
+}
+
+pub fn form_text_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let palette = palette(theme);
+    let border_color = match status {
+        text_input::Status::Focused { .. } => palette.accent,
+        text_input::Status::Hovered => palette.text_muted,
+        text_input::Status::Disabled => palette.border,
+        text_input::Status::Active => palette.border,
+    };
+    let background = match status {
+        text_input::Status::Hovered | text_input::Status::Focused { is_hovered: true } => {
+            palette.surface_hover
+        }
+        text_input::Status::Disabled => palette.surface,
+        _ => palette.surface_muted,
+    };
+
+    text_input::Style {
+        background: Background::Color(background),
+        border: border(CONTROL_RADIUS, border_color, 1.0),
+        icon: palette.text_muted,
+        placeholder: palette.text_muted,
+        value: palette.text,
+        selection: palette.accent_soft,
+    }
+}
+
+pub fn feedback_info_surface(theme: &Theme) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        background: Some(Background::Color(palette.surface_muted)),
+        text_color: Some(palette.text),
+        border: border(CONTROL_RADIUS, palette.border, 1.0),
+        ..container::Style::default()
+    }
+}
+
+pub fn feedback_success_surface(theme: &Theme) -> container::Style {
+    feedback_tinted_surface(
+        theme,
+        |palette| palette.accent_soft,
+        |palette| palette.accent,
+    )
+}
+
+pub fn feedback_warning_surface(theme: &Theme) -> container::Style {
+    feedback_tinted_surface(
+        theme,
+        |palette| palette.warning_soft,
+        |palette| palette.warning,
+    )
+}
+
+pub fn feedback_error_surface(theme: &Theme) -> container::Style {
+    feedback_tinted_surface(
+        theme,
+        |palette| palette.danger_soft,
+        |palette| palette.danger,
+    )
+}
+
+pub fn feedback_info_color(theme: &Theme) -> Color {
+    palette(theme).text_muted
+}
+
+pub fn feedback_success_color(theme: &Theme) -> Color {
+    palette(theme).accent
+}
+
+pub fn feedback_warning_color(theme: &Theme) -> Color {
+    palette(theme).warning
+}
+
+pub fn feedback_error_color(theme: &Theme) -> Color {
+    palette(theme).danger
+}
+
+fn feedback_tinted_surface(
+    theme: &Theme,
+    background: fn(Palette) -> Color,
+    border_color: fn(Palette) -> Color,
+) -> container::Style {
+    let palette = palette(theme);
+    container::Style {
+        background: Some(Background::Color(background(palette))),
+        text_color: Some(palette.text),
+        border: border(CONTROL_RADIUS, border_color(palette), 1.0),
+        ..container::Style::default()
     }
 }
 

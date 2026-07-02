@@ -13,8 +13,8 @@ pub use message::{
     RefreshInvalidation, SelectionMessage, SettingsMessage, ToolbarMessage,
 };
 pub use state::{
-    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, FileIcon, RefreshState,
-    State,
+    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, FeedbackTone, FileIcon,
+    FormFeedback, RefreshState, State,
 };
 
 pub fn run() -> iced::Result {
@@ -75,8 +75,8 @@ mod tests {
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadsMessage, FileIcon, Message, RefreshInvalidation, RefreshState,
-        SelectionMessage, SettingsMessage, State, ToolbarMessage,
+        DownloadFilter, DownloadsMessage, FeedbackTone, FileIcon, Message, RefreshInvalidation,
+        RefreshState, SelectionMessage, SettingsMessage, State, ToolbarMessage,
     };
 
     #[test]
@@ -258,8 +258,12 @@ mod tests {
 
         assert!(state.is_settings_open());
         assert_eq!(
-            state.settings_feedback(),
+            state.settings_feedback().map(|feedback| feedback.message()),
             Some("Connection test succeeded and settings saved.")
+        );
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Success)
         );
         assert_eq!(
             reloaded.applied_endpoint(),
@@ -327,8 +331,12 @@ mod tests {
 
         assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
         assert_eq!(
-            state.settings_feedback(),
+            state.settings_feedback().map(|feedback| feedback.message()),
             Some("Config was invalid; using defaults.")
+        );
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Warning)
         );
     }
 
@@ -384,8 +392,12 @@ mod tests {
         let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
 
         assert_eq!(
-            state.settings_feedback(),
+            state.settings_feedback().map(|feedback| feedback.message()),
             Some("Endpoint must start with http:// or https://.")
+        );
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Error)
         );
         assert!(state.is_settings_open());
         assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
@@ -433,8 +445,12 @@ mod tests {
         assert_eq!(state.connected_version(), Some("1.37.0"));
         assert_eq!(state.refresh_state(), RefreshState::Refreshing);
         assert_eq!(
-            state.settings_feedback(),
+            state.settings_feedback().map(|feedback| feedback.message()),
             Some("Connection test succeeded.")
+        );
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Success)
         );
     }
 
@@ -508,8 +524,12 @@ mod tests {
 
         assert_eq!(state.connection_status(), ConnectionStatus::Failed);
         assert_eq!(
-            state.settings_feedback(),
+            state.settings_feedback().map(|feedback| feedback.message()),
             Some("Connection failed. Check the endpoint and secret.")
+        );
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Error)
         );
     }
 
@@ -528,8 +548,12 @@ mod tests {
         let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
 
         assert_eq!(
-            state.add_feedback(),
+            state.add_feedback().map(|feedback| feedback.message()),
             Some("Enter an http, https, or magnet link.")
+        );
+        assert_eq!(
+            state.add_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Error)
         );
         assert!(!state.is_add_pending());
 
@@ -569,7 +593,14 @@ mod tests {
 
         assert!(!state.is_add_pending());
         assert_eq!(state.add_input(), "");
-        assert_eq!(state.add_feedback(), Some("Download added."));
+        assert_eq!(
+            state.add_feedback().map(|feedback| feedback.message()),
+            Some("Download added.")
+        );
+        assert_eq!(
+            state.add_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Success)
+        );
         assert_eq!(state.refresh_state(), RefreshState::Refreshing);
     }
 
@@ -599,7 +630,14 @@ mod tests {
 
         assert!(!state.is_add_pending());
         assert_eq!(state.add_input(), "https://example.test/file");
-        assert_eq!(state.add_feedback(), Some("aria2 returned an RPC error."));
+        assert_eq!(
+            state.add_feedback().map(|feedback| feedback.message()),
+            Some("aria2 returned an RPC error.")
+        );
+        assert_eq!(
+            state.add_feedback().map(|feedback| feedback.tone()),
+            Some(FeedbackTone::Error)
+        );
         assert!(state.is_add_ready());
     }
 

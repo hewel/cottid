@@ -97,6 +97,53 @@ pub enum RefreshState {
     Stale,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedbackTone {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormFeedback {
+    tone: FeedbackTone,
+    message: String,
+}
+
+impl FormFeedback {
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::new(FeedbackTone::Info, message)
+    }
+
+    pub fn success(message: impl Into<String>) -> Self {
+        Self::new(FeedbackTone::Success, message)
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self::new(FeedbackTone::Warning, message)
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(FeedbackTone::Error, message)
+    }
+
+    fn new(tone: FeedbackTone, message: impl Into<String>) -> Self {
+        Self {
+            tone,
+            message: message.into(),
+        }
+    }
+
+    pub fn tone(&self) -> FeedbackTone {
+        self.tone
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadRowView {
     name: String,
@@ -301,14 +348,14 @@ impl State {
     }
 
     fn from_config_load(loaded: ConfigLoad, config_path: Option<PathBuf>) -> Self {
-        let feedback = loaded.feedback().map(str::to_owned);
+        let feedback = loaded.feedback().map(FormFeedback::warning);
         Self::from_persisted_config(loaded.into_config(), config_path, feedback)
     }
 
     fn from_persisted_config(
         config: PersistedConfig,
         config_path: Option<PathBuf>,
-        feedback: Option<String>,
+        feedback: Option<FormFeedback>,
     ) -> Self {
         let applied_settings = config.settings().clone();
         let draft = SettingsDraft::from_settings(&applied_settings);
@@ -378,8 +425,8 @@ impl State {
         &self.add.input
     }
 
-    pub fn add_feedback(&self) -> Option<&str> {
-        self.add.feedback.as_deref()
+    pub fn add_feedback(&self) -> Option<&FormFeedback> {
+        self.add.feedback.as_ref()
     }
 
     pub fn is_add_ready(&self) -> bool {
@@ -426,8 +473,8 @@ impl State {
         self.settings.draft_theme_preference
     }
 
-    pub fn settings_feedback(&self) -> Option<&str> {
-        self.settings.feedback.as_deref()
+    pub fn settings_feedback(&self) -> Option<&FormFeedback> {
+        self.settings.feedback.as_ref()
     }
 
     pub fn is_plaintext_fallback_pending(&self) -> bool {
@@ -588,7 +635,7 @@ impl State {
                 Ok(settings) => settings,
                 Err(error) => {
                     self.connection.status = ConnectionStatus::Failed;
-                    self.settings.feedback = Some(error.message().to_owned());
+                    self.settings.feedback = Some(FormFeedback::error(error.message()));
                     return None;
                 }
             }
@@ -630,7 +677,8 @@ impl State {
                         "Connection test succeeded and settings saved.",
                     );
                 } else {
-                    self.settings.feedback = Some("Connection test succeeded.".to_owned());
+                    self.settings.feedback =
+                        Some(FormFeedback::success("Connection test succeeded."));
                 }
                 true
             }
@@ -639,7 +687,7 @@ impl State {
                 self.connection.version = None;
                 self.connection.settings = None;
                 self.clear_snapshot();
-                self.settings.feedback = Some(error.display_message().to_owned());
+                self.settings.feedback = Some(FormFeedback::error(error.display_message()));
                 false
             }
         }
@@ -889,7 +937,7 @@ impl State {
             .settings
             .draft
             .endpoint_validation_message()
-            .map(str::to_owned);
+            .map(FormFeedback::error);
     }
 
     pub(super) fn open_add_dialog(&mut self) {
@@ -916,19 +964,21 @@ impl State {
         let uri = match validate_add_input(&self.add.input) {
             Ok(uri) => uri,
             Err(message) => {
-                self.add.feedback = Some(message.to_owned());
+                self.add.feedback = Some(FormFeedback::error(message));
                 return None;
             }
         };
 
         let Some(settings) = self.connection.settings.clone() else {
-            self.add.feedback = Some("Connect to aria2 before adding a download.".to_owned());
+            self.add.feedback = Some(FormFeedback::warning(
+                "Connect to aria2 before adding a download.",
+            ));
             return None;
         };
 
         self.add.generation += 1;
         self.add.pending = true;
-        self.add.feedback = Some("Adding download...".to_owned());
+        self.add.feedback = Some(FormFeedback::info("Adding download..."));
 
         Some((self.add.generation, settings, uri))
     }
@@ -947,11 +997,11 @@ impl State {
         match result {
             Ok(_) => {
                 self.add.input.clear();
-                self.add.feedback = Some("Download added.".to_owned());
+                self.add.feedback = Some(FormFeedback::success("Download added."));
                 true
             }
             Err(error) => {
-                self.add.feedback = Some(error.display_message().to_owned());
+                self.add.feedback = Some(FormFeedback::error(error.display_message()));
                 false
             }
         }
@@ -983,7 +1033,7 @@ impl State {
             .settings
             .draft
             .endpoint_validation_message()
-            .map(str::to_owned);
+            .map(FormFeedback::error);
     }
 
     pub(super) fn set_draft_auth(&mut self, auth: RpcAuthDraft) {
@@ -1015,7 +1065,7 @@ impl State {
                 self.commit_settings(settings, previous_endpoint, true, "Settings saved.");
             }
             Err(error) => {
-                self.settings.feedback = Some(error.message().to_owned());
+                self.settings.feedback = Some(FormFeedback::error(error.message()));
                 self.settings.open = true;
             }
         }
@@ -1037,7 +1087,7 @@ impl State {
             pending.previous_endpoint,
             None,
         );
-        self.settings.feedback = Some(pending.success_feedback.to_owned());
+        self.settings.feedback = Some(FormFeedback::success(pending.success_feedback));
         self.settings.open = !pending.close_on_success;
     }
 
@@ -1057,8 +1107,9 @@ impl State {
             pending.previous_endpoint,
             None,
         );
-        self.settings.feedback =
-            Some("Settings saved. Token will be required again next launch.".to_owned());
+        self.settings.feedback = Some(FormFeedback::success(
+            "Settings saved. Token will be required again next launch.",
+        ));
         self.settings.open = !pending.close_on_success;
     }
 
@@ -1089,7 +1140,7 @@ impl State {
             )),
         );
         if persisted {
-            self.settings.feedback = Some(success_feedback.to_owned());
+            self.settings.feedback = Some(FormFeedback::success(success_feedback));
         } else if self.settings.pending_plaintext_fallback.is_some()
             && let Some(pending) = self.settings.pending_plaintext_fallback.as_mut()
         {
@@ -1173,12 +1224,12 @@ impl State {
                     close_on_success: false,
                     success_feedback: "Settings saved.",
                 });
-                self.settings.feedback = Some(error.message().to_owned());
+                self.settings.feedback = Some(FormFeedback::warning(error.message()));
                 self.settings.open = true;
                 return false;
             }
 
-            self.settings.feedback = Some(error.message().to_owned());
+            self.settings.feedback = Some(FormFeedback::error(error.message()));
             return false;
         }
 
@@ -1331,7 +1382,7 @@ struct AddState {
     input: String,
     generation: u64,
     pending: bool,
-    feedback: Option<String>,
+    feedback: Option<FormFeedback>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1341,7 +1392,7 @@ struct SettingsState {
     theme_preference: ThemePreference,
     draft_theme_preference: ThemePreference,
     open: bool,
-    feedback: Option<String>,
+    feedback: Option<FormFeedback>,
     config_path: Option<PathBuf>,
     auth_storage: AuthStorage,
     pending_plaintext_fallback: Option<PendingSettingsSave>,
