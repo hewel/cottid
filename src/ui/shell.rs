@@ -8,9 +8,14 @@ use crate::app::{
 use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
-use crate::ui::overlay::{TooltipOptions, app_tooltip};
+use crate::ui::overlay::{
+    Alignment as OverlayAlignment, Placement, PopoverId, PopoverOptions, TooltipOptions,
+    app_popover, app_tooltip,
+};
 use crate::ui::theme;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
+
+const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
@@ -114,13 +119,13 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
     .spacing(24)
     .width(Length::Fill);
 
-    let mut bottom_content = column![].spacing(10).width(Length::Fill);
-
-    if !compact {
-        bottom_content = bottom_content.push(connection_status_card(state));
-    }
-
-    bottom_content = bottom_content.push(row![settings_icon_button()].width(Length::Fill));
+    let bottom_content = column![
+        row![connection_detail_popover(state), settings_icon_button()]
+            .spacing(8)
+            .width(Length::Fill)
+    ]
+    .spacing(10)
+    .width(Length::Fill);
 
     let content = column![main_content, space::vertical(), bottom_content]
         .spacing(16)
@@ -157,30 +162,45 @@ fn nav_button(
     }
 }
 
-fn connection_status_card(state: &State) -> Element<'_, Message> {
-    ui::muted_panel(
-        column![
-            text("Connection").size(12).style(theme::muted_text),
-            text(state.status_text()).size(13),
-            text(state.applied_auth_label())
-                .size(12)
-                .style(theme::muted_text),
-            text(state.applied_endpoint())
-                .size(12)
-                .style(theme::muted_text),
-            text(state.counts_text()).size(12).style(theme::muted_text),
-            text(format!("Down {}", state.download_speed_text()))
-                .size(12)
-                .style(theme::muted_text),
-            text(format!("Up {}", state.upload_speed_text()))
-                .size(12)
-                .style(theme::muted_text),
-        ]
-        .spacing(4),
-    )
-    .padding(12)
+fn connection_detail_content(state: &State) -> Element<'static, Message> {
+    column![
+        text("Connection").size(12).style(theme::muted_text),
+        text(state.status_text()).size(13),
+        text(state.applied_auth_label().to_owned())
+            .size(12)
+            .style(theme::muted_text),
+        text(state.applied_endpoint().to_owned())
+            .size(12)
+            .style(theme::muted_text),
+        text(state.counts_text()).size(12).style(theme::muted_text),
+        text(format!("Down {}", state.download_speed_text()))
+            .size(12)
+            .style(theme::muted_text),
+        text(format!("Up {}", state.upload_speed_text()))
+            .size(12)
+            .style(theme::muted_text),
+    ]
+    .spacing(4)
     .width(Length::Fill)
     .into()
+}
+
+fn connection_detail_popover(state: &State) -> Element<'_, Message> {
+    let trigger = ui::icon_button(Icon::Cpu, Message::TogglePopover(CONNECTION_DETAIL_POPOVER));
+
+    app_popover(
+        CONNECTION_DETAIL_POPOVER,
+        trigger,
+        connection_detail_content(state),
+        state.is_popover_open(CONNECTION_DETAIL_POPOVER),
+        PopoverOptions {
+            placement: Placement::Above,
+            alignment: OverlayAlignment::Start,
+            width: Some(240.0),
+            ..PopoverOptions::default()
+        },
+        Message::ClosePopover,
+    )
 }
 
 fn settings_icon_button() -> Element<'static, Message> {

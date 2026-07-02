@@ -38,10 +38,6 @@ impl PopoverState {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "retained reusable popover API after removing sidebar demo"
-)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PopoverOptions {
     pub(crate) placement: Placement,
@@ -69,10 +65,6 @@ impl Default for PopoverOptions {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "retained reusable popover API after removing sidebar demo"
-)]
 pub(crate) fn app_popover<'a>(
     id: PopoverId,
     trigger: impl Into<Element<'a, Message>>,
@@ -83,7 +75,7 @@ pub(crate) fn app_popover<'a>(
 ) -> Element<'a, Message> {
     let content = opaque(
         container(content)
-            .padding(8)
+            .padding(12)
             .width(popover_width(options))
             .style(style::popover_surface),
     );
@@ -99,7 +91,6 @@ pub(crate) fn app_popover<'a>(
     .into()
 }
 
-#[allow(dead_code, reason = "used by retained popover API")]
 fn popover_width(options: PopoverOptions) -> Length {
     options.width.map_or(Length::Shrink, Length::Fixed)
 }

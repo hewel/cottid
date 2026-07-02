@@ -17,10 +17,6 @@ pub(crate) fn tooltip_surface(_theme: &Theme) -> container::Style {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "retained reusable popover API after removing sidebar demo"
-)]
 pub(crate) fn popover_surface(theme: &Theme) -> container::Style {
     let mode = mode_from_theme(theme);
 

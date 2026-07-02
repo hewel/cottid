@@ -426,7 +426,6 @@ impl State {
         self.settings.open
     }
 
-    #[allow(dead_code, reason = "used when an app view renders a popover")]
     pub fn is_popover_open(&self, id: PopoverId) -> bool {
         self.popovers.is_open(id)
     }
