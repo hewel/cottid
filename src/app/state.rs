@@ -433,15 +433,6 @@ impl State {
         self.downloads.refresh_state
     }
 
-    pub fn refresh_state_text(&self) -> &'static str {
-        match self.downloads.refresh_state {
-            RefreshState::NeverRefreshed => "Never refreshed",
-            RefreshState::Refreshing => "Refreshing",
-            RefreshState::Fresh => "Fresh",
-            RefreshState::Stale => "Stale",
-        }
-    }
-
     pub fn refresh_feedback(&self) -> Option<&str> {
         self.downloads
             .feedback

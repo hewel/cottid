@@ -31,7 +31,7 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 fn list_panel(state: &State) -> container::Container<'_, Message> {
-    let mut content = column![list_header(state)].spacing(12).width(Length::Fill);
+    let mut content = column![].spacing(12).width(Length::Fill);
 
     if matches!(state.refresh_state(), RefreshState::Stale) {
         content = content.push(stale_banner(state));
@@ -48,32 +48,6 @@ fn list_panel(state: &State) -> container::Container<'_, Message> {
     container(scrollable(content).height(Length::Fill))
         .width(Length::Fill)
         .height(Length::Fill)
-}
-
-fn list_header(state: &State) -> Element<'_, Message> {
-    container(
-        row![
-            column![
-                text(state.selected_filter().label()).size(24),
-                text(state.counts_text()).size(12).color(theme::TEXT_MUTED),
-            ]
-            .spacing(2),
-            row![
-                icon(Icon::Refresh, 16, theme::TEXT_MUTED),
-                text(state.refresh_state_text())
-                    .size(12)
-                    .color(theme::TEXT_MUTED),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center),
-    )
-    .style(theme::surface)
-    .padding(16)
-    .width(Length::Fill)
-    .into()
 }
 
 fn stale_banner(state: &State) -> Element<'_, Message> {
