@@ -425,12 +425,55 @@ mod tests {
 
         let _task = super::update(
             &mut state,
+            Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Complete)),
+        );
+
+        let contents = fs::read_to_string(&path).expect("config written");
+        let reloaded = State::load_from_path(path);
+
+        assert!(contents.contains("selected_filter = \"complete\""));
+        assert_eq!(reloaded.selected_filter(), DownloadFilter::Complete);
+    }
+
+    #[test]
+    fn hidden_filter_message_persists_as_visible_sidebar_preference() {
+        let path = temp_config_path("hidden-filter");
+        let mut state = State::load_from_path(path.clone());
+
+        let _task = super::update(
+            &mut state,
             Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Paused)),
         );
 
+        let contents = fs::read_to_string(&path).expect("config written");
         let reloaded = State::load_from_path(path);
 
-        assert_eq!(reloaded.selected_filter(), DownloadFilter::Paused);
+        assert!(contents.contains("selected_filter = \"active\""));
+        assert_eq!(reloaded.selected_filter(), DownloadFilter::Active);
+    }
+
+    #[test]
+    fn hidden_saved_filter_values_remap_to_visible_sidebar_groups() {
+        for (saved, expected) in [
+            ("all", DownloadFilter::Active),
+            ("waiting", DownloadFilter::Active),
+            ("paused", DownloadFilter::Active),
+            ("error", DownloadFilter::Complete),
+            ("unknown", DownloadFilter::Active),
+        ] {
+            let path = temp_config_path(saved);
+            fs::write(
+                &path,
+                format!(
+                    "endpoint=http://aria2.local:6800/jsonrpc\npolling_interval_seconds=5\nselected_filter={saved}\nauth=none\n"
+                ),
+            )
+            .expect("legacy config");
+
+            let state = State::load_from_path(path);
+
+            assert_eq!(state.selected_filter(), expected);
+        }
     }
 
     #[test]
@@ -803,10 +846,19 @@ mod tests {
         );
 
         let rows = state.download_rows();
-        assert!(rows[0].can_pause());
-        assert!(!rows[0].can_unpause());
-        assert!(rows[0].can_remove());
-        assert!(!rows[2].can_remove());
+        let active_row = rows
+            .iter()
+            .find(|row| row.gid() == "active-gid")
+            .expect("active row");
+        let paused_row = rows
+            .iter()
+            .find(|row| row.gid() == "paused-gid")
+            .expect("paused row");
+        assert!(active_row.can_pause());
+        assert!(!active_row.can_unpause());
+        assert!(active_row.can_remove());
+        assert!(paused_row.can_unpause());
+        assert_eq!(state.filter_count(DownloadFilter::Complete), 1);
         assert!(state.can_purge_stopped());
 
         let _task = super::update(
@@ -817,8 +869,16 @@ mod tests {
         );
 
         let rows = state.download_rows();
-        assert!(rows[0].pending());
-        assert!(!rows[1].can_unpause());
+        let active_row = rows
+            .iter()
+            .find(|row| row.gid() == "active-gid")
+            .expect("active row");
+        let paused_row = rows
+            .iter()
+            .find(|row| row.gid() == "paused-gid")
+            .expect("paused row");
+        assert!(active_row.pending());
+        assert!(!paused_row.can_unpause());
     }
 
     #[test]
@@ -1224,7 +1284,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_state_returns_only_matching_download_rows() {
+    fn active_filter_returns_waiting_paused_and_active_rows_in_visible_order() {
         let mut state = State::initial();
         connect(&mut state);
 
@@ -1236,20 +1296,67 @@ mod tests {
                 result: Ok(snapshot_with_items(vec![
                     download_item("active-gid", DownloadStatus::Active),
                     download_item("waiting-gid", DownloadStatus::Waiting),
+                    download_item("paused-gid", DownloadStatus::Paused),
+                    download_item("complete-gid", DownloadStatus::Complete),
                     download_item("error-gid", DownloadStatus::Error),
                 ])),
             }),
         );
 
-        let _task = super::update(
+        let rows = state.download_rows();
+
+        assert_eq!(
+            rows.iter().map(|row| row.gid()).collect::<Vec<_>>(),
+            vec!["waiting-gid", "paused-gid", "active-gid"]
+        );
+        assert_eq!(state.filter_count(DownloadFilter::All), 5);
+        assert_eq!(state.filter_count(DownloadFilter::Active), 3);
+        assert_eq!(state.filter_count(DownloadFilter::Complete), 2);
+    }
+
+    #[test]
+    fn complete_filter_returns_error_rows_before_complete_rows() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        apply_snapshot(
             &mut state,
-            Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Error)),
+            vec![
+                download_item("complete-gid", DownloadStatus::Complete),
+                download_item("error-gid", DownloadStatus::Error),
+                download_item("active-gid", DownloadStatus::Active),
+            ],
         );
 
-        assert_eq!(state.download_rows().len(), 1);
-        assert_eq!(state.download_rows()[0].gid(), "error-gid");
-        assert_eq!(state.filter_count(DownloadFilter::All), 3);
-        assert_eq!(state.filter_count(DownloadFilter::Active), 1);
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Complete)),
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(
+            rows.iter().map(|row| row.gid()).collect::<Vec<_>>(),
+            vec!["error-gid", "complete-gid"]
+        );
+    }
+
+    #[test]
+    fn exact_download_status_filters_remain_available_internally() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("waiting-gid", DownloadStatus::Waiting),
+                download_item("paused-gid", DownloadStatus::Paused),
+                download_item("error-gid", DownloadStatus::Error),
+            ],
+        );
+
+        assert_eq!(state.filter_count(DownloadFilter::Waiting), 1);
+        assert_eq!(state.filter_count(DownloadFilter::Paused), 1);
+        assert_eq!(state.filter_count(DownloadFilter::Error), 1);
     }
 
     #[test]

@@ -46,6 +46,7 @@ impl DownloadFilter {
         Self::Complete,
         Self::Error,
     ];
+    pub const VISIBLE: [Self; 2] = [Self::Active, Self::Complete];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -59,34 +60,45 @@ impl DownloadFilter {
     }
 
     pub fn config_value(self) -> &'static str {
-        match self {
-            Self::All => "all",
+        match self.visible_sidebar_filter() {
             Self::Active => "active",
-            Self::Waiting => "waiting",
-            Self::Paused => "paused",
             Self::Complete => "complete",
-            Self::Error => "error",
+            Self::All | Self::Waiting | Self::Paused | Self::Error => unreachable!(),
         }
     }
 
     pub fn from_config_value(value: &str) -> Self {
         match value {
             "active" => Self::Active,
-            "waiting" => Self::Waiting,
-            "paused" => Self::Paused,
             "complete" => Self::Complete,
-            "error" => Self::Error,
-            _ => Self::All,
+            "error" => Self::Complete,
+            "all" | "waiting" | "paused" => Self::Active,
+            _ => Self::Active,
+        }
+    }
+
+    pub fn visible_sidebar_filter(self) -> Self {
+        match self {
+            Self::Complete | Self::Error => Self::Complete,
+            Self::All | Self::Active | Self::Waiting | Self::Paused => Self::Active,
         }
     }
 
     fn matches(self, item: &DownloadItem) -> bool {
         match self {
             Self::All => true,
-            Self::Active => matches!(item.status(), DownloadStatus::Active),
+            Self::Active => matches!(
+                item.status(),
+                DownloadStatus::Waiting | DownloadStatus::Paused | DownloadStatus::Active
+            ),
             Self::Waiting => matches!(item.status(), DownloadStatus::Waiting),
             Self::Paused => matches!(item.status(), DownloadStatus::Paused),
-            Self::Complete => matches!(item.status(), DownloadStatus::Complete),
+            Self::Complete => {
+                matches!(
+                    item.status(),
+                    DownloadStatus::Error | DownloadStatus::Complete
+                )
+            }
             Self::Error => matches!(item.status(), DownloadStatus::Error),
         }
     }
@@ -543,8 +555,8 @@ impl State {
 
     pub fn download_rows(&self) -> Vec<DownloadRowView> {
         self.downloads
-            .ordered_items()
-            .filter(|item| self.downloads.filter.matches(item))
+            .ordered_items_for_filter(self.downloads.filter)
+            .into_iter()
             .map(|item| {
                 download_row_view(item, &self.actions, self.selection.selected_gid.as_ref())
             })
@@ -623,7 +635,7 @@ impl State {
 
     #[cfg(test)]
     pub fn download_items(&self) -> Vec<&DownloadItem> {
-        self.downloads.ordered_items().collect()
+        self.downloads.ordered_items_for_filter(DownloadFilter::All)
     }
 
     pub fn status_text(&self) -> String {
@@ -843,7 +855,7 @@ impl State {
     }
 
     pub(super) fn set_download_filter(&mut self, filter: DownloadFilter) {
-        self.downloads.filter = filter;
+        self.downloads.filter = filter.visible_sidebar_filter();
         self.persist_config(None, None);
     }
 
@@ -1481,13 +1493,68 @@ impl DownloadsState {
             && self.stopped_order.is_empty()
     }
 
-    fn ordered_items(&self) -> impl Iterator<Item = &DownloadItem> {
-        self.active_order
-            .iter()
-            .chain(self.waiting_order.iter())
-            .chain(self.stopped_order.iter())
-            .filter_map(|gid| self.items_by_gid.get(gid))
-            .map(|record| &record.item)
+    fn ordered_items_for_filter(&self, filter: DownloadFilter) -> Vec<&DownloadItem> {
+        let mut items = Vec::new();
+
+        match filter {
+            DownloadFilter::All => {
+                self.push_ordered_matches(&mut items, &self.active_order, |_| true);
+                self.push_ordered_matches(&mut items, &self.waiting_order, |_| true);
+                self.push_ordered_matches(&mut items, &self.stopped_order, |_| true);
+            }
+            DownloadFilter::Active => {
+                self.push_ordered_matches(&mut items, &self.waiting_order, |status| {
+                    matches!(status, DownloadStatus::Waiting)
+                });
+                self.push_ordered_matches(&mut items, &self.waiting_order, |status| {
+                    matches!(status, DownloadStatus::Paused)
+                });
+                self.push_ordered_matches(&mut items, &self.active_order, |status| {
+                    matches!(status, DownloadStatus::Active)
+                });
+            }
+            DownloadFilter::Waiting => {
+                self.push_ordered_matches(&mut items, &self.waiting_order, |status| {
+                    matches!(status, DownloadStatus::Waiting)
+                });
+            }
+            DownloadFilter::Paused => {
+                self.push_ordered_matches(&mut items, &self.waiting_order, |status| {
+                    matches!(status, DownloadStatus::Paused)
+                });
+            }
+            DownloadFilter::Complete => {
+                self.push_ordered_matches(&mut items, &self.stopped_order, |status| {
+                    matches!(status, DownloadStatus::Error)
+                });
+                self.push_ordered_matches(&mut items, &self.stopped_order, |status| {
+                    matches!(status, DownloadStatus::Complete)
+                });
+            }
+            DownloadFilter::Error => {
+                self.push_ordered_matches(&mut items, &self.stopped_order, |status| {
+                    matches!(status, DownloadStatus::Error)
+                });
+            }
+        }
+
+        items
+    }
+
+    fn push_ordered_matches<'a>(
+        &'a self,
+        items: &mut Vec<&'a DownloadItem>,
+        order: &[Gid],
+        matches_status: impl Fn(&DownloadStatus) -> bool,
+    ) {
+        for gid in order {
+            let Some(record) = self.items_by_gid.get(gid) else {
+                continue;
+            };
+            if matches_status(record.item.status()) {
+                items.push(&record.item);
+            }
+        }
     }
 
     fn retain_ordered_records(&mut self) {

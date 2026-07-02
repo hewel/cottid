@@ -117,7 +117,7 @@ impl Default for PersistedConfig {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
-            selected_filter: "all".to_owned(),
+            selected_filter: "active".to_owned(),
             auth_storage: AuthStorage::None,
             theme_preference: ThemePreference::System,
         }
@@ -492,7 +492,7 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
         .ui
         .as_ref()
         .and_then(|ui| ui.selected_filter.clone())
-        .unwrap_or_else(|| "all".to_owned());
+        .unwrap_or_else(|| "active".to_owned());
     let theme_preference = config
         .ui
         .and_then(|ui| ui.theme)
@@ -547,7 +547,7 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
     Ok(ConfigLoad {
         config: PersistedConfig::with_auth_storage(
             settings,
-            selected_filter.unwrap_or_else(|| "all".to_owned()),
+            selected_filter.unwrap_or_else(|| "active".to_owned()),
             AuthStorage::None,
         )
         .with_theme_preference(theme_preference.unwrap_or(ThemePreference::System)),

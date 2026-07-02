@@ -2,13 +2,12 @@ use iced::widget::{column, container, mouse_area, progress_bar, row, scrollable,
 use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
-    ActionMessage, AddMessage, DownloadDetailView, DownloadFilter, DownloadRowView,
-    DownloadsMessage, Message, RefreshState, SelectionMessage, State,
+    ActionMessage, AddMessage, DownloadDetailView, DownloadRowView, Message, RefreshState,
+    SelectionMessage, State,
 };
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
-use crate::ui::variants::BadgeVariant;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     if state.is_compact_layout()
@@ -47,15 +46,14 @@ fn list_panel(state: &State) -> container::Container<'_, Message> {
         }
     }
 
-    container(column![header(state), scrollable(content).height(Length::Fill),].spacing(22))
+    container(column![header(), scrollable(content).height(Length::Fill),].spacing(22))
         .width(Length::Fill)
         .height(Length::Fill)
 }
 
-fn header(state: &State) -> Element<'_, Message> {
+fn header() -> Element<'static, Message> {
     row![
-        row![text("Downloads").size(30), all_filter_chip(state),]
-            .spacing(12)
+        row![text("Downloads").size(30),]
             .align_y(Alignment::Center)
             .width(Length::Fill),
         search_box(),
@@ -65,34 +63,6 @@ fn header(state: &State) -> Element<'_, Message> {
     .align_y(Alignment::Center)
     .width(Length::Fill)
     .into()
-}
-
-fn all_filter_chip(state: &State) -> Element<'_, Message> {
-    let filter = state.selected_filter();
-    let content = row![
-        text(if filter == DownloadFilter::All {
-            "All"
-        } else {
-            filter.label()
-        })
-        .size(14),
-        ui::badge(
-            state.filter_count(filter).to_string(),
-            BadgeVariant::Neutral
-        ),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-
-    let selected = filter == DownloadFilter::All;
-    let button = ui::toggle_button(content, selected);
-
-    button
-        .padding([8, 12])
-        .on_press(Message::Downloads(DownloadsMessage::FilterChanged(
-            DownloadFilter::All,
-        )))
-        .into()
 }
 
 fn search_box() -> Element<'static, Message> {

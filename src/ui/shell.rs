@@ -90,18 +90,11 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
     );
 
     let mut filters = column![].spacing(6);
-    for filter in crate::app::DownloadFilter::ALL
-        .into_iter()
-        .filter(|filter| *filter != crate::app::DownloadFilter::All)
-    {
-        let label = if compact {
-            filter.label().chars().next().unwrap_or('?').to_string()
-        } else {
-            filter.label().to_owned()
-        };
+    for filter in crate::app::DownloadFilter::VISIBLE {
         let selected = filter == state.selected_filter();
         filters = filters.push(filter_button(
-            label,
+            filter_icon(filter),
+            if compact { None } else { Some(filter.label()) },
             state.filter_count(filter),
             selected,
             move || Message::Downloads(DownloadsMessage::FilterChanged(filter)),
@@ -228,26 +221,41 @@ fn settings_icon_button() -> Element<'static, Message> {
 }
 
 fn filter_button(
-    label: String,
+    icon_kind: Icon,
+    label: Option<&'static str>,
     count: usize,
     selected: bool,
     message: impl FnOnce() -> Message,
 ) -> Element<'static, Message> {
-    let content = if label.len() == 1 {
-        row![text(label).size(14)].align_y(Alignment::Center)
-    } else {
+    let content = if let Some(label) = label {
         row![
+            icon(icon_kind, 18, theme::text_color),
             text(label).size(14).width(Length::Fill),
             ui::badge(count.to_string(), BadgeVariant::Neutral),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
+    } else {
+        row![icon(icon_kind, 18, theme::text_color)]
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
     };
     let button = ui::toggle_button(content, selected)
         .padding([9, 12])
         .width(Length::Fill);
 
     button.on_press(message()).into()
+}
+
+fn filter_icon(filter: crate::app::DownloadFilter) -> Icon {
+    match filter {
+        crate::app::DownloadFilter::Active => Icon::SpinnerGap,
+        crate::app::DownloadFilter::Complete => Icon::CheckCircle,
+        crate::app::DownloadFilter::All
+        | crate::app::DownloadFilter::Waiting
+        | crate::app::DownloadFilter::Paused
+        | crate::app::DownloadFilter::Error => unreachable!(),
+    }
 }
 
 fn add_modal(state: &State) -> Element<'_, Message> {
