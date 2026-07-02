@@ -9,7 +9,7 @@ use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
-use crate::ui::variants::ButtonVariant;
+use crate::ui::variants::{BadgeVariant, ButtonVariant};
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
@@ -188,7 +188,7 @@ fn filter_button(
     } else {
         row![
             text(label).size(14).width(Length::Fill),
-            text(count.to_string()).size(13).style(theme::muted_text),
+            ui::badge(count.to_string(), BadgeVariant::Neutral),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
@@ -242,7 +242,7 @@ fn add_modal(state: &State) -> Element<'_, Message> {
             add_feedback,
             row![
                 submit,
-                ui::text_button("Cancel", ButtonVariant::Subtle)
+                ui::text_button("Cancel", ButtonVariant::Secondary)
                     .on_press(Message::Add(AddMessage::Cancel)),
             ]
             .spacing(8)
@@ -311,11 +311,11 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         .push(settings_feedback);
 
     let mut actions = row![
-        ui::text_button("Test Connection", ButtonVariant::Subtle)
+        ui::text_button("Test Connection", ButtonVariant::Secondary)
             .on_press(Message::Connection(ConnectionMessage::TestRequested)),
         ui::text_button("Save", ButtonVariant::Primary)
             .on_press(Message::Settings(SettingsMessage::Save)),
-        ui::text_button("Cancel", ButtonVariant::Subtle)
+        ui::text_button("Cancel", ButtonVariant::Secondary)
             .on_press(Message::Settings(SettingsMessage::Cancel)),
     ]
     .spacing(8)
@@ -324,11 +324,11 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
     if state.is_plaintext_fallback_pending() {
         actions = actions
             .push(
-                ui::text_button("Save Plaintext", ButtonVariant::Subtle)
+                ui::text_button("Save Plaintext", ButtonVariant::Secondary)
                     .on_press(Message::Settings(SettingsMessage::SavePlaintextFallback)),
             )
             .push(
-                ui::text_button("Session Only", ButtonVariant::Subtle)
+                ui::text_button("Session Only", ButtonVariant::Secondary)
                     .on_press(Message::Settings(SettingsMessage::KeepSecretSessionOnly)),
             );
     }
@@ -350,16 +350,15 @@ fn auth_button(
         label.to_owned()
     };
 
-    ui::text_button(
-        label,
-        if auth == selected {
-            ButtonVariant::Selected
-        } else {
-            ButtonVariant::Subtle
-        },
-    )
-    .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
-    .into()
+    let button = if auth == selected {
+        ui::selected_text_button(label)
+    } else {
+        ui::text_button(label, ButtonVariant::Secondary)
+    };
+
+    button
+        .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
+        .into()
 }
 
 fn theme_row(selected: ThemePreference) -> Element<'static, Message> {
@@ -382,15 +381,13 @@ fn theme_button(
         preference.label().to_owned()
     };
 
-    ui::text_button(
-        label,
-        if preference == selected {
-            ButtonVariant::Selected
-        } else {
-            ButtonVariant::Subtle
-        },
-    )
-    .on_press(Message::Settings(SettingsMessage::ThemePreferenceChanged(
+    let button = if preference == selected {
+        ui::selected_text_button(label)
+    } else {
+        ui::text_button(label, ButtonVariant::Secondary)
+    };
+
+    button.on_press(Message::Settings(SettingsMessage::ThemePreferenceChanged(
         preference,
     )))
 }

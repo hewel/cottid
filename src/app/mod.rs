@@ -7,6 +7,7 @@ mod update;
 use iced::{Element, Task, Theme};
 
 use crate::config::ThemePreference;
+use crate::ui::tokens::Mode;
 
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
@@ -54,8 +55,8 @@ pub fn view(state: &State) -> Element<'_, Message> {
 pub fn theme(state: &State) -> Option<Theme> {
     match state.theme_preference() {
         ThemePreference::System => None,
-        ThemePreference::Light => Some(Theme::Light),
-        ThemePreference::Dark => Some(Theme::Dark),
+        ThemePreference::Light => Some(crate::ui::theme::iced_theme_for_mode(Mode::Light)),
+        ThemePreference::Dark => Some(crate::ui::theme::iced_theme_for_mode(Mode::Dark)),
     }
 }
 
@@ -319,7 +320,8 @@ mod tests {
         );
         let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
 
-        assert_eq!(super::theme(&state), Some(iced::Theme::Light));
+        let theme = super::theme(&state).expect("explicit light theme");
+        assert!(!theme.extended_palette().is_dark);
     }
 
     #[test]

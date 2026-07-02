@@ -1,10 +1,21 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ButtonVariant {
     Primary,
-    Subtle,
-    Selected,
-    Icon,
-    Danger,
+    Secondary,
+    Destructive,
+    Ghost,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BadgeVariant {
+    Neutral,
+    Success,
+    Warning,
+    Error,
+    Blue,
+    Green,
+    Red,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +34,7 @@ pub(crate) enum SurfaceVariant {
 pub(crate) enum TextVariant {
     Primary,
     Muted,
-    Accent,
+    Info,
     Danger,
     Warning,
 }
@@ -44,19 +55,4 @@ pub(crate) enum InputVariant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProgressVariant {
     Accent,
-}
-
-#[expect(dead_code, reason = "reserved Astryx-style categorical vocabulary")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CategoricalTone {
-    Red,
-    Orange,
-    Yellow,
-    Green,
-    Teal,
-    Cyan,
-    Blue,
-    Purple,
-    Pink,
-    Gray,
 }

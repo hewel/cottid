@@ -4,7 +4,8 @@ use iced::{Alignment, Element, Length};
 use crate::app::{FeedbackTone, FormFeedback, Message};
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
-use crate::ui::variants::{ButtonVariant, FeedbackVariant, SurfaceVariant};
+use crate::ui::variants::{BadgeVariant, ButtonVariant, FeedbackVariant, SurfaceVariant};
+use crate::ui::widgets;
 
 pub(crate) fn surface<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -94,6 +95,10 @@ pub(crate) fn text_button(
         .style(move |theme, status| theme::button_variant(theme, status, variant))
 }
 
+pub(crate) fn selected_text_button(label: impl Into<String>) -> button::Button<'static, Message> {
+    button(text(label.into())).style(theme::selected_button)
+}
+
 pub(crate) fn form_input<'a>(
     placeholder: &str,
     value: &str,
@@ -103,6 +108,13 @@ pub(crate) fn form_input<'a>(
         .on_input(on_input)
         .padding(10)
         .style(theme::form_text_input)
+}
+
+pub(crate) fn badge(label: impl Into<String>, variant: BadgeVariant) -> Element<'static, Message> {
+    container(text(label.into()).size(crate::ui::tokens::TOKENS.typography.caption))
+        .padding([crate::ui::tokens::S1 / 2.0, crate::ui::tokens::S2])
+        .style(move |theme| widgets::badge::style(theme, variant))
+        .into()
 }
 
 pub(crate) fn feedback_or_info(

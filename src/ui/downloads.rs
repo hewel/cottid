@@ -1,4 +1,4 @@
-use iced::widget::{column, container, mouse_area, progress_bar, row, scrollable, text};
+use iced::widget::{button, column, container, mouse_area, progress_bar, row, scrollable, text};
 use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
@@ -8,7 +8,7 @@ use crate::app::{
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
-use crate::ui::variants::ButtonVariant;
+use crate::ui::variants::BadgeVariant;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     if state.is_compact_layout()
@@ -69,25 +69,33 @@ fn header(state: &State) -> Element<'_, Message> {
 
 fn all_filter_chip(state: &State) -> Element<'_, Message> {
     let filter = state.selected_filter();
-    let label = if filter == DownloadFilter::All {
-        format!("All {}", state.filter_count(DownloadFilter::All))
+    let content = row![
+        text(if filter == DownloadFilter::All {
+            "All"
+        } else {
+            filter.label()
+        })
+        .size(14),
+        ui::badge(
+            state.filter_count(filter).to_string(),
+            BadgeVariant::Neutral
+        ),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let button = if filter == DownloadFilter::All {
+        button(content).style(theme::selected_button)
     } else {
-        format!("{} {}", filter.label(), state.filter_count(filter))
+        button(content).style(theme::subtle_button)
     };
 
-    ui::text_button(
-        label,
-        if filter == DownloadFilter::All {
-            ButtonVariant::Selected
-        } else {
-            ButtonVariant::Subtle
-        },
-    )
-    .padding([8, 12])
-    .on_press(Message::Downloads(DownloadsMessage::FilterChanged(
-        DownloadFilter::All,
-    )))
-    .into()
+    button
+        .padding([8, 12])
+        .on_press(Message::Downloads(DownloadsMessage::FilterChanged(
+            DownloadFilter::All,
+        )))
+        .into()
 }
 
 fn search_box() -> Element<'static, Message> {
@@ -178,9 +186,11 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
         row![
             text(row.progress().to_owned()).size(12),
             text(row.speed().to_owned()).size(12),
-            text(if row.pending() { "Pending" } else { "" })
-                .size(12)
-                .style(theme::muted_text),
+            if row.pending() {
+                ui::badge("Pending", BadgeVariant::Blue)
+            } else {
+                text("").into()
+            },
         ]
         .spacing(12)
         .align_y(Alignment::Center),

@@ -1,6 +1,6 @@
 # Rust design tokens and component wrappers
 
-Status: accepted
+Status: superseded by ADR-0006
 
 Cottid's UI theme is organized as Rust design tokens, variant enums, `iced`
 style adapters, and UI-internal component wrappers.
