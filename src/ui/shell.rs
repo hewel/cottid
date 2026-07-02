@@ -184,7 +184,6 @@ fn status_strip(state: &State) -> Element<'_, Message> {
             text(state.status_text()).size(12),
             text(format!("Down {}", state.download_speed_text())).size(12),
             text(format!("Up {}", state.upload_speed_text())).size(12),
-            text(state.refresh_state_text()).size(12),
             text(state.counts_text()).size(12),
             text(feedback).size(12).color(theme::RED),
         ]
