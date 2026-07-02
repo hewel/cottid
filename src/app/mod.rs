@@ -1126,8 +1126,33 @@ mod tests {
         assert_eq!(state.upload_speed_text(), "512 B/s");
         assert_eq!(state.counts_text(), "Active 2 | Waiting 3 | Stopped 4");
         assert_eq!(state.download_items().len(), 1);
-        assert_eq!(state.download_rows()[0].name(), "active-gid.bin");
+        let rows = state.download_rows();
+        assert_eq!(rows[0].name(), "active-gid.bin");
+        assert_eq!(rows[0].download_speed(), "512 B/s");
+        assert_eq!(rows[0].upload_speed(), "0 B/s");
+        assert_eq!(rows[0].eta(), "2s");
         assert_eq!(state.refresh_state(), RefreshState::Fresh);
+    }
+
+    #[test]
+    fn download_row_speed_display_always_includes_upload_and_eta() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item_with_transfer_speeds(
+                "active-gid",
+                DownloadStatus::Active,
+                512,
+                128,
+            )],
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(rows[0].download_speed(), "512 B/s");
+        assert_eq!(rows[0].upload_speed(), "128 B/s");
+        assert_eq!(rows[0].eta(), "2s");
     }
 
     #[test]
@@ -1377,6 +1402,28 @@ mod tests {
 
     fn download_item(gid: &str, status: DownloadStatus) -> DownloadItem {
         download_item_with_path(gid, status, format!("/tmp/{gid}.bin"))
+    }
+
+    fn download_item_with_transfer_speeds(
+        gid: &str,
+        status: DownloadStatus,
+        download_speed: u64,
+        upload_speed: u64,
+    ) -> DownloadItem {
+        DownloadItem::new(
+            Gid::new(gid).expect("valid gid"),
+            status,
+            2048,
+            1024,
+            download_speed,
+            upload_speed,
+            vec![DownloadFile::new(
+                format!("/tmp/{gid}.bin"),
+                2048,
+                1024,
+                true,
+            )],
+        )
     }
 
     fn download_item_with_path(

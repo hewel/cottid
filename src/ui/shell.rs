@@ -8,13 +8,11 @@ use crate::app::{
 use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
-use crate::ui::overlay::style as overlay_style;
 use crate::ui::overlay::{
     Alignment as OverlayAlignment, Placement, PopoverId, PopoverOptions, TooltipOptions,
     app_popover, app_tooltip, app_tooltip_element,
 };
 use crate::ui::theme;
-use crate::ui::tokens::TOKENS;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
 
 const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
@@ -191,7 +189,12 @@ fn connection_detail_popover(state: &State) -> Element<'_, Message> {
     let is_open = state.is_popover_open(CONNECTION_DETAIL_POPOVER);
     let trigger = app_tooltip_element(
         ui::icon_button(Icon::Cpu, Message::TogglePopover(CONNECTION_DETAIL_POPOVER)),
-        connection_speed_tooltip(state),
+        ui::transfer_speed_summary(
+            state.download_speed_text(),
+            state.upload_speed_text(),
+            None,
+            ui::TransferSpeedTone::Tooltip,
+        ),
         TooltipOptions {
             enabled: !is_open,
             ..TooltipOptions::default()
@@ -211,26 +214,6 @@ fn connection_detail_popover(state: &State) -> Element<'_, Message> {
         },
         Message::ClosePopover,
     )
-}
-
-fn connection_speed_tooltip(state: &State) -> Element<'static, Message> {
-    row![
-        speed_tooltip_item(Icon::ArrowDown, state.download_speed_text()),
-        speed_tooltip_item(Icon::ArrowUp, state.upload_speed_text()),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn speed_tooltip_item(icon_kind: Icon, speed: String) -> Element<'static, Message> {
-    row![
-        icon(icon_kind, 12, overlay_style::tooltip_foreground),
-        text(speed).size(TOKENS.typography.caption),
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center)
-    .into()
 }
 
 fn settings_icon_button() -> Element<'static, Message> {

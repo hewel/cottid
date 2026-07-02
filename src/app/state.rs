@@ -15,7 +15,9 @@ use crate::config::{
     save_config_with_token_store,
 };
 use crate::ui::overlay::{PopoverId, PopoverState};
-use crate::util::format::{format_bytes, format_count, format_eta, format_progress, format_speed};
+use crate::util::format::{
+    format_bytes, format_count, format_eta, format_eta_duration, format_progress, format_speed,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -154,7 +156,9 @@ pub struct DownloadRowView {
     status: String,
     progress: String,
     progress_per_mille: u16,
-    speed: String,
+    download_speed: String,
+    upload_speed: String,
+    eta: String,
     can_pause: bool,
     can_unpause: bool,
     can_remove: bool,
@@ -192,8 +196,16 @@ impl DownloadRowView {
         f32::from(self.progress_per_mille) / 1000.0
     }
 
-    pub fn speed(&self) -> &str {
-        &self.speed
+    pub fn download_speed(&self) -> &str {
+        &self.download_speed
+    }
+
+    pub fn upload_speed(&self) -> &str {
+        &self.upload_speed
+    }
+
+    pub fn eta(&self) -> &str {
+        &self.eta
     }
 
     pub fn can_pause(&self) -> bool {
@@ -1603,6 +1615,7 @@ fn download_row_view(
         .and_then(RunningAction::gid)
         .is_some_and(|gid| gid == item.gid());
     let action_available = actions.pending.is_none();
+    let speed = row_speed_parts(item);
 
     DownloadRowView {
         name: download_name(item),
@@ -1612,7 +1625,9 @@ fn download_row_view(
         status: item.status().display_label().to_owned(),
         progress: progress_text(item),
         progress_per_mille: progress_per_mille(item),
-        speed: speed_text(item),
+        download_speed: speed.download,
+        upload_speed: speed.upload,
+        eta: speed.eta,
         can_pause: action_available && matches!(item.status(), DownloadStatus::Active),
         can_unpause: action_available
             && matches!(
@@ -1803,6 +1818,26 @@ fn speed_text(item: &DownloadItem) -> String {
         format_speed(download_speed),
         format_eta(eta, download_speed)
     )
+}
+
+struct RowSpeedParts {
+    download: String,
+    upload: String,
+    eta: String,
+}
+
+fn row_speed_parts(item: &DownloadItem) -> RowSpeedParts {
+    let download_speed = item.download_speed_bytes_per_second();
+    let upload_speed = item.upload_speed_bytes_per_second();
+    let eta = item
+        .total_length_bytes()
+        .saturating_sub(item.completed_length_bytes());
+
+    RowSpeedParts {
+        download: format_speed(download_speed),
+        upload: format_speed(upload_speed),
+        eta: format_eta_duration(eta, download_speed),
+    }
 }
 
 fn validate_add_input(input: &str) -> Result<String, &'static str> {

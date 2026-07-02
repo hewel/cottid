@@ -102,6 +102,15 @@ fn search_box() -> Element<'static, Message> {
         .into()
 }
 
+fn download_card_speed(row: &DownloadRowView) -> Element<'static, Message> {
+    ui::transfer_speed_summary_end_aligned(
+        row.download_speed().to_owned(),
+        row.upload_speed().to_owned(),
+        Some(row.eta().to_owned()),
+        ui::TransferSpeedTone::Default,
+    )
+}
+
 fn stale_banner(state: &State) -> Element<'_, Message> {
     let message = state.refresh_feedback().unwrap_or("Refresh failed.");
 
@@ -182,12 +191,7 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
             .height(Length::Fixed(6.0)),
         row![
             text(row.progress().to_owned()).size(12),
-            text(row.speed().to_owned()).size(12),
-            if row.pending() {
-                ui::badge("Pending", BadgeVariant::Blue)
-            } else {
-                text("").into()
-            },
+            download_card_speed(&row),
         ]
         .spacing(12)
         .align_y(Alignment::Center),

@@ -1,11 +1,13 @@
 use iced::widget::{
     button, column, container, mouse_area, opaque, row, scrollable, space, stack, text, text_input,
 };
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Color, Element, Length, Theme};
 
 use crate::app::{FeedbackTone, FormFeedback, Message};
 use crate::ui::icons::{Icon, icon};
+use crate::ui::overlay::style as overlay_style;
 use crate::ui::theme;
+use crate::ui::tokens::TOKENS;
 use crate::ui::variants::{BadgeVariant, ButtonVariant, FeedbackVariant, SurfaceVariant};
 use crate::ui::widgets;
 
@@ -161,6 +163,82 @@ pub(crate) fn badge(label: impl Into<String>, variant: BadgeVariant) -> Element<
         .padding([crate::ui::tokens::S1 / 2.0, crate::ui::tokens::S2])
         .style(move |theme| widgets::badge::style(theme, variant))
         .into()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransferSpeedTone {
+    Default,
+    Tooltip,
+}
+
+pub(crate) fn transfer_speed_summary(
+    download_speed: impl Into<String>,
+    upload_speed: impl Into<String>,
+    eta: Option<String>,
+    tone: TransferSpeedTone,
+) -> Element<'static, Message> {
+    transfer_speed_summary_content(download_speed, upload_speed, eta, tone).into()
+}
+
+pub(crate) fn transfer_speed_summary_end_aligned(
+    download_speed: impl Into<String>,
+    upload_speed: impl Into<String>,
+    eta: Option<String>,
+    tone: TransferSpeedTone,
+) -> Element<'static, Message> {
+    row![
+        space::horizontal(),
+        transfer_speed_summary_content(download_speed, upload_speed, eta, tone),
+    ]
+    .width(Length::Fill)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn transfer_speed_summary_content(
+    download_speed: impl Into<String>,
+    upload_speed: impl Into<String>,
+    eta: Option<String>,
+    tone: TransferSpeedTone,
+) -> iced::widget::Row<'static, Message> {
+    let mut content = row![
+        transfer_speed_item(Icon::ArrowDown, download_speed.into(), tone),
+        transfer_speed_item(Icon::ArrowUp, upload_speed.into(), tone),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+
+    if let Some(eta) = eta {
+        content = content.push(transfer_speed_item(Icon::HourglassMedium, eta, tone));
+    }
+
+    content
+}
+
+fn transfer_speed_item(
+    icon_kind: Icon,
+    label: String,
+    tone: TransferSpeedTone,
+) -> Element<'static, Message> {
+    let color = transfer_speed_color(tone);
+    let label = text(label).size(TOKENS.typography.caption);
+    let label = if matches!(tone, TransferSpeedTone::Default) {
+        label.style(theme::muted_text)
+    } else {
+        label
+    };
+
+    row![icon(icon_kind, 12, color), label,]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+fn transfer_speed_color(tone: TransferSpeedTone) -> fn(&Theme) -> Color {
+    match tone {
+        TransferSpeedTone::Default => theme::muted_color,
+        TransferSpeedTone::Tooltip => overlay_style::tooltip_foreground,
+    }
 }
 
 pub(crate) fn feedback_or_info(
