@@ -21,6 +21,7 @@ pub enum Icon {
     Play,
     Purge,
     Settings,
+    Trash,
     Torrent,
     Video,
 }
@@ -42,6 +43,7 @@ impl Icon {
             Self::Play => "play.svg",
             Self::Purge => "broom.svg",
             Self::Settings => "gear.svg",
+            Self::Trash => "trash.svg",
             Self::Torrent => "cloud-arrow-down.svg",
             Self::Video => "file-video.svg",
         }

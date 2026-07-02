@@ -1,5 +1,5 @@
-use iced::widget::{button, column, container, progress_bar, row, scrollable, text};
-use iced::{Alignment, Element, Length};
+use iced::widget::{button, column, container, mouse_area, progress_bar, row, scrollable, text};
+use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
     ActionMessage, AddMessage, DownloadDetailView, DownloadFilter, DownloadRowView,
@@ -130,36 +130,37 @@ fn empty_state(message: String) -> Element<'static, Message> {
 }
 
 fn download_card(row: DownloadRowView) -> Element<'static, Message> {
-    let mut actions = row![action_button(
-        Icon::File,
-        Message::Selection(SelectionMessage::Select(row.gid_value())),
-        false,
-    )]
-    .spacing(6)
-    .align_y(Alignment::Center);
+    let gid = row.gid_value();
+    let mut actions = row![].spacing(6).align_y(Alignment::Center);
     if row.can_pause() {
         actions = actions.push(action_button(
             Icon::Pause,
-            Message::Action(ActionMessage::Pause(row.gid_value())),
+            Message::Action(ActionMessage::Pause(gid.clone())),
             false,
         ));
     }
     if row.can_unpause() {
         actions = actions.push(action_button(
             Icon::Play,
-            Message::Action(ActionMessage::Unpause(row.gid_value())),
+            Message::Action(ActionMessage::Unpause(gid.clone())),
             false,
         ));
     }
     if row.can_remove() {
         actions = actions.push(action_button(
-            Icon::Clear,
-            Message::Action(ActionMessage::Remove(row.gid_value())),
+            Icon::Trash,
+            Message::Action(ActionMessage::Remove(gid.clone())),
             true,
         ));
     }
 
-    let mut body = column![
+    let selection_message = if row.selected() {
+        Message::Selection(SelectionMessage::Clear)
+    } else {
+        Message::Selection(SelectionMessage::Select(gid))
+    };
+
+    let mut card_body = column![
         row![
             container(icon(Icon::from(row.file_icon()), 24, theme::accent_color))
                 .style(theme::muted_surface)
@@ -172,7 +173,6 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
             ]
             .spacing(2)
             .width(Length::Fill),
-            actions,
         ]
         .spacing(10)
         .align_y(Alignment::Center),
@@ -188,10 +188,11 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
         .spacing(12)
         .align_y(Alignment::Center),
     ]
-    .spacing(10);
+    .spacing(10)
+    .width(Length::Fill);
 
     if let Some(error) = row.error() {
-        body = body.push(
+        card_body = card_body.push(
             row![
                 icon(Icon::Error, 16, theme::danger_color),
                 text(error.to_owned()).size(12).style(theme::danger_text)
@@ -200,6 +201,15 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
             .align_y(Alignment::Center),
         );
     }
+
+    let body = row![
+        mouse_area(card_body)
+            .on_press(selection_message)
+            .interaction(mouse::Interaction::Pointer),
+        actions,
+    ]
+    .spacing(10)
+    .align_y(Alignment::Start);
 
     container(body)
         .style(if row.selected() {
