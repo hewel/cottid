@@ -2,6 +2,7 @@ pub mod color;
 pub mod components;
 pub mod downloads;
 pub mod icons;
+pub(crate) mod overlay;
 pub mod shell;
 pub mod theme;
 pub mod tokens;

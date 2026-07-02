@@ -8,6 +8,7 @@ use crate::app::{
 use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
+use crate::ui::overlay::{TooltipOptions, app_tooltip};
 use crate::ui::theme;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
 
@@ -182,10 +183,14 @@ fn connection_status_card(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-fn settings_icon_button() -> button::Button<'static, Message> {
-    ui::icon_button(
-        Icon::Settings,
-        Message::Toolbar(ToolbarMessage::OpenSettings),
+fn settings_icon_button() -> Element<'static, Message> {
+    app_tooltip(
+        ui::icon_button(
+            Icon::Settings,
+            Message::Toolbar(ToolbarMessage::OpenSettings),
+        ),
+        "Connection and app settings",
+        TooltipOptions::default(),
     )
 }
 

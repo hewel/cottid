@@ -14,6 +14,7 @@ use crate::config::{
     SystemTokenStore, ThemePreference, default_config_path, load_config,
     save_config_with_token_store,
 };
+use crate::ui::overlay::{PopoverId, PopoverState};
 use crate::util::format::{format_bytes, format_count, format_eta, format_progress, format_speed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +309,7 @@ pub struct State {
     scheduler: RefreshScheduler,
     actions: ActionsState,
     selection: SelectionState,
+    popovers: PopoverState,
     viewport_width: u32,
     viewport_height: u32,
 }
@@ -386,6 +388,7 @@ impl State {
                 feedback: None,
             },
             selection: SelectionState { selected_gid: None },
+            popovers: PopoverState::default(),
             viewport_width: 1280,
             viewport_height: 800,
         }
@@ -421,6 +424,11 @@ impl State {
 
     pub fn is_settings_open(&self) -> bool {
         self.settings.open
+    }
+
+    #[allow(dead_code, reason = "used when an app view renders a popover")]
+    pub fn is_popover_open(&self, id: PopoverId) -> bool {
+        self.popovers.is_open(id)
     }
 
     pub fn applied_endpoint(&self) -> &str {
@@ -927,6 +935,8 @@ impl State {
             return;
         }
 
+        self.popovers.close();
+
         if self.add.open {
             self.cancel_add_dialog();
         }
@@ -940,6 +950,8 @@ impl State {
     }
 
     pub(super) fn open_add_dialog(&mut self) {
+        self.popovers.close();
+
         if self.settings.open {
             self.cancel_settings();
         }
@@ -964,6 +976,18 @@ impl State {
         } else if self.settings.open {
             self.cancel_settings();
         }
+    }
+
+    pub(super) fn toggle_popover(&mut self, id: PopoverId) {
+        if self.add.open || self.settings.open {
+            return;
+        }
+
+        self.popovers.toggle(id);
+    }
+
+    pub(super) fn close_popover(&mut self) {
+        self.popovers.close();
     }
 
     pub(super) fn set_add_input(&mut self, input: String) {

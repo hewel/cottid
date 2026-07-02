@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14.0", features = ["svg", "tokio"] }
+iced = { version = "0.14.0", features = ["advanced", "svg", "tokio"] }
 keyring = "4.1.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }

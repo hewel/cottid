@@ -7,6 +7,7 @@ use crate::aria2::notifications::Aria2Notification;
 use crate::config::RpcAuthDraft;
 use crate::config::Settings;
 use crate::config::ThemePreference;
+use crate::ui::overlay::PopoverId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -15,6 +16,8 @@ pub enum Message {
     Connection(ConnectionMessage),
     Downloads(DownloadsMessage),
     ModalCancel,
+    TogglePopover(PopoverId),
+    ClosePopover,
     Selection(SelectionMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
@@ -72,7 +75,7 @@ pub enum ConnectionMessage {
 pub enum DownloadsMessage {
     RefreshTick,
     RefreshRequested,
-    #[expect(dead_code, reason = "reserved for future WebSocket invalidation")]
+    #[allow(dead_code, reason = "reserved for future WebSocket invalidation")]
     Invalidated(RefreshInvalidation),
     FilterChanged(DownloadFilter),
     RefreshFinished {
@@ -81,7 +84,7 @@ pub enum DownloadsMessage {
     },
 }
 
-#[expect(dead_code, reason = "reserved for future WebSocket invalidation")]
+#[allow(dead_code, reason = "reserved for future WebSocket invalidation")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefreshInvalidation {
     Active,

@@ -16,6 +16,14 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.cancel_active_modal();
             Task::none()
         }
+        Message::TogglePopover(id) => {
+            state.toggle_popover(id);
+            Task::none()
+        }
+        Message::ClosePopover => {
+            state.close_popover();
+            Task::none()
+        }
         Message::Selection(message) => update_selection(state, message),
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),

@@ -73,6 +73,7 @@ mod tests {
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
     use crate::config::{RpcAuthDraft, Settings, ThemePreference};
+    use crate::ui::overlay::PopoverId;
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
@@ -215,6 +216,29 @@ mod tests {
         let _task = super::update(&mut state, Message::ModalCancel);
 
         assert!(!state.is_settings_open());
+    }
+
+    #[test]
+    fn toggle_popover_opens_and_closes_same_popover() {
+        let mut state = State::initial();
+        let id = PopoverId(1);
+
+        let _task = super::update(&mut state, Message::TogglePopover(id));
+        assert!(state.is_popover_open(id));
+
+        let _task = super::update(&mut state, Message::TogglePopover(id));
+        assert!(!state.is_popover_open(id));
+    }
+
+    #[test]
+    fn close_popover_closes_open_popover() {
+        let mut state = State::initial();
+        let id = PopoverId(1);
+
+        let _task = super::update(&mut state, Message::TogglePopover(id));
+        let _task = super::update(&mut state, Message::ClosePopover);
+
+        assert!(!state.is_popover_open(id));
     }
 
     #[test]

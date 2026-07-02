@@ -23,7 +23,11 @@ pub fn subscription(state: &super::State) -> Subscription<Message> {
     keyboard
 }
 
-fn app_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
+fn app_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
+    if matches!(status, event::Status::Captured) {
+        return None;
+    }
+
     if let Event::Window(iced::window::Event::Resized(size)) = event {
         return Some(Message::WindowResized {
             width: size.width.round() as u32,
@@ -119,6 +123,27 @@ mod tests {
             ),
             Some(Message::Settings(SettingsMessage::Save))
         );
+    }
+
+    #[test]
+    fn ignores_captured_keyboard_events() {
+        let message = app_event(
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                modified_key: keyboard::Key::Unidentified,
+                physical_key: keyboard::key::Physical::Unidentified(
+                    keyboard::key::NativeCode::Unidentified,
+                ),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            iced::event::Status::Captured,
+            iced::window::Id::unique(),
+        );
+
+        assert_eq!(message, None);
     }
 
     fn shortcut(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Message> {
