@@ -833,7 +833,6 @@ mod tests {
     #[test]
     fn connection_test_inserts_secret_token_without_debug_leak() {
         let mut draft = SettingsDraft::from_settings(&Settings::default());
-        draft.set_auth(crate::config::RpcAuthDraft::SessionSecret);
         draft.set_secret("super-secret");
         let settings = draft.apply().expect("valid settings");
         let transport = FakeTransport::returning(Ok(HttpResponse::ok(

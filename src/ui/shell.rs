@@ -5,7 +5,7 @@ use crate::app::{
     AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message, SettingsMessage,
     State, TextInputFocusTarget, ToolbarMessage,
 };
-use crate::config::{RpcAuthDraft, ThemePreference};
+use crate::config::ThemePreference;
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::overlay::{
@@ -361,13 +361,12 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
 
     let secret = text_field(
         FieldOptions {
-            description: Some("aria2 token secret for this endpoint."),
-            requiredness: Requiredness::Required,
+            description: Some("Optional aria2 token secret for this endpoint."),
+            requiredness: Requiredness::Optional,
             is_disabled: is_testing,
             label_action: Some(Message::FocusTextInput(
                 TextInputFocusTarget::SettingsSecret,
             )),
-            status: state.draft_secret_validation_message().map(field_error),
             ..FieldOptions::new("Secret")
         },
         "Session token",
@@ -376,33 +375,7 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         |value| Message::Settings(SettingsMessage::SecretChanged(value)),
     );
 
-    let auth_row = row![
-        auth_button(
-            "No authentication",
-            RpcAuthDraft::NoSecret,
-            state.draft_auth()
-        ),
-        auth_button(
-            "Token secret",
-            RpcAuthDraft::SessionSecret,
-            state.draft_auth()
-        ),
-    ]
-    .spacing(8);
-
-    let mut fields = column![
-        text("Connection Settings").size(20),
-        endpoint,
-        text("Authentication").size(12).style(theme::muted_text),
-        auth_row,
-        text("Theme").size(12).style(theme::muted_text),
-        theme_row(state.draft_theme_preference()),
-    ]
-    .spacing(8);
-
-    if matches!(state.draft_auth(), RpcAuthDraft::SessionSecret) {
-        fields = fields.push(secret);
-    }
+    let mut fields = column![text("Connection Settings").size(20), endpoint, secret,].spacing(8);
 
     if let Some(feedback) = state.settings_feedback() {
         fields = fields.push(ui::form_feedback_banner(feedback));
@@ -437,36 +410,6 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         .padding(18)
         .width(Length::Fill)
         .into()
-}
-
-fn auth_button(
-    label: &'static str,
-    auth: RpcAuthDraft,
-    selected: RpcAuthDraft,
-) -> Element<'static, Message> {
-    ui::toggle_text_button(label, auth == selected)
-        .on_press(Message::Settings(SettingsMessage::AuthChanged(auth)))
-        .into()
-}
-
-fn theme_row(selected: ThemePreference) -> Element<'static, Message> {
-    let mut row = row![].spacing(8);
-
-    for preference in ThemePreference::ALL {
-        row = row.push(settings_theme_button(preference, selected));
-    }
-
-    row.into()
-}
-
-fn settings_theme_button(
-    preference: ThemePreference,
-    selected: ThemePreference,
-) -> button::Button<'static, Message> {
-    let label = preference.label();
-    ui::toggle_text_button(label, preference == selected).on_press(Message::Settings(
-        SettingsMessage::ThemePreferenceChanged(preference),
-    ))
 }
 
 fn field_error(message: &'static str) -> FieldStatus<'static> {

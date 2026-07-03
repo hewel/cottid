@@ -242,8 +242,8 @@ dialog, but a pending add submission keeps the add dialog active.
 MVP settings:
 
 - RPC endpoint URL.
-- Auth mode.
-- Optional secret input.
+- Optional secret input. Entering a secret enables token authentication; clearing
+  it disables authentication and clears the stored token.
 - Polling interval when supported.
 - Test connection action.
 - Apply/save action.

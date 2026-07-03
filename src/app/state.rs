@@ -10,9 +10,9 @@ use crate::aria2::domain::{
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::config::{
-    AuthStorage, ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft,
-    SystemTokenStore, ThemePreference, default_config_path, load_config,
-    save_config_with_token_store, save_config_without_token_store,
+    AuthStorage, ConfigLoad, PersistedConfig, Settings, SettingsDraft, SystemTokenStore,
+    ThemePreference, default_config_path, load_config, save_config_with_token_store,
+    save_config_without_token_store,
 };
 use crate::ui::overlay::{PopoverId, PopoverState};
 use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
@@ -390,7 +390,6 @@ impl State {
                 applied: applied_settings,
                 draft,
                 theme_preference: config.theme_preference(),
-                draft_theme_preference: config.theme_preference(),
                 open: false,
                 feedback,
                 config_path,
@@ -482,22 +481,8 @@ impl State {
         self.settings.draft.endpoint_validation_message()
     }
 
-    pub fn draft_auth(&self) -> RpcAuthDraft {
-        self.settings.draft.auth()
-    }
-
     pub fn draft_secret(&self) -> &str {
         self.settings.draft.secret()
-    }
-
-    pub fn draft_secret_validation_message(&self) -> Option<&'static str> {
-        if matches!(self.settings.draft.auth(), RpcAuthDraft::SessionSecret)
-            && self.settings.draft.secret().is_empty()
-        {
-            Some("Secret is required for token authentication.")
-        } else {
-            None
-        }
     }
 
     pub fn draft_polling_interval_seconds(&self) -> u16 {
@@ -506,10 +491,6 @@ impl State {
 
     pub fn theme_preference(&self) -> ThemePreference {
         self.settings.theme_preference
-    }
-
-    pub fn draft_theme_preference(&self) -> ThemePreference {
-        self.settings.draft_theme_preference
     }
 
     pub fn settings_feedback(&self) -> Option<&FormFeedback> {
@@ -890,7 +871,6 @@ impl State {
 
     pub(super) fn set_theme_preference(&mut self, theme_preference: ThemePreference) {
         self.settings.theme_preference = theme_preference;
-        self.settings.draft_theme_preference = theme_preference;
         self.persist_ui_preferences();
     }
 
@@ -1129,7 +1109,6 @@ impl State {
             self.settings.applied = pending.previous_settings;
             self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
             self.settings.theme_preference = pending.previous_theme_preference;
-            self.settings.draft_theme_preference = self.settings.theme_preference;
             self.settings.auth_storage = pending.previous_auth_storage;
             if self.connection.settings.as_ref() == Some(&pending.settings) {
                 self.connection.status = ConnectionStatus::Offline;
@@ -1139,18 +1118,12 @@ impl State {
             }
         }
         self.settings.draft.cancel_to(&self.settings.applied);
-        self.settings.draft_theme_preference = self.settings.theme_preference;
         self.settings.feedback = None;
         self.settings.open = false;
     }
 
     pub(super) fn set_draft_endpoint(&mut self, endpoint: String) {
         self.settings.draft.set_endpoint(endpoint);
-        self.settings.feedback = None;
-    }
-
-    pub(super) fn set_draft_auth(&mut self, auth: RpcAuthDraft) {
-        self.settings.draft.set_auth(auth);
         self.settings.feedback = None;
     }
 
@@ -1164,11 +1137,6 @@ impl State {
             self.settings.draft.set_polling_interval_seconds(seconds);
             self.settings.feedback = None;
         }
-    }
-
-    pub(super) fn set_draft_theme_preference(&mut self, theme_preference: ThemePreference) {
-        self.settings.draft_theme_preference = theme_preference;
-        self.settings.feedback = None;
     }
 
     pub(super) fn save_settings(&mut self) {
@@ -1191,7 +1159,6 @@ impl State {
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
         self.settings.theme_preference = pending.theme_preference;
-        self.settings.draft_theme_preference = self.settings.theme_preference;
         self.settings.pending_plaintext_fallback = None;
         self.settings.auth_storage = AuthStorage::PlaintextFallback;
         self.persist_config_with_auth_storage(
@@ -1211,7 +1178,6 @@ impl State {
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
         self.settings.theme_preference = pending.theme_preference;
-        self.settings.draft_theme_preference = self.settings.theme_preference;
         self.settings.pending_plaintext_fallback = None;
         self.settings.auth_storage = AuthStorage::SessionOnly;
         self.persist_config_with_auth_storage(
@@ -1237,7 +1203,6 @@ impl State {
         let previous_theme_preference = self.settings.theme_preference;
         self.settings.applied = settings;
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
-        self.settings.theme_preference = self.settings.draft_theme_preference;
         self.settings.auth_storage = self.next_auth_storage();
         self.settings.pending_plaintext_fallback = None;
         self.settings.feedback = None;
@@ -1541,7 +1506,6 @@ struct SettingsState {
     applied: Settings,
     draft: SettingsDraft,
     theme_preference: ThemePreference,
-    draft_theme_preference: ThemePreference,
     open: bool,
     feedback: Option<FormFeedback>,
     config_path: Option<PathBuf>,

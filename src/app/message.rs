@@ -4,7 +4,6 @@ use crate::aria2::domain::DownloadSnapshot;
 use crate::aria2::domain::Gid;
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
-use crate::config::RpcAuthDraft;
 use crate::config::Settings;
 use crate::config::ThemePreference;
 use crate::ui::overlay::PopoverId;
@@ -140,8 +139,6 @@ pub enum SettingsMessage {
     SavePlaintextFallback,
     KeepSecretSessionOnly,
     EndpointChanged(String),
-    AuthChanged(RpcAuthDraft),
     SecretChanged(String),
     PollingIntervalChanged(String),
-    ThemePreferenceChanged(ThemePreference),
 }

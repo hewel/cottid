@@ -299,20 +299,12 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
             state.set_draft_endpoint(endpoint);
             Task::none()
         }
-        SettingsMessage::AuthChanged(auth) => {
-            state.set_draft_auth(auth);
-            Task::none()
-        }
         SettingsMessage::SecretChanged(secret) => {
             state.set_draft_secret(secret);
             Task::none()
         }
         SettingsMessage::PollingIntervalChanged(value) => {
             state.set_draft_polling_interval(value);
-            Task::none()
-        }
-        SettingsMessage::ThemePreferenceChanged(theme_preference) => {
-            state.set_draft_theme_preference(theme_preference);
             Task::none()
         }
     }

@@ -72,7 +72,7 @@ mod tests {
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
-    use crate::config::{RpcAuthDraft, Settings, ThemePreference};
+    use crate::config::{Settings, ThemePreference};
     use crate::ui::overlay::PopoverId;
     use crate::ui::widgets::tree_list::TreeMessage;
 
@@ -497,25 +497,6 @@ mod tests {
     }
 
     #[test]
-    fn theme_preference_persists_as_ui_preference() {
-        let path = temp_config_path("theme");
-        let mut state = State::load_from_path(path.clone());
-
-        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
-        let _task = super::update(
-            &mut state,
-            Message::Settings(SettingsMessage::ThemePreferenceChanged(
-                ThemePreference::Dark,
-            )),
-        );
-        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
-
-        let reloaded = State::load_from_path(path);
-
-        assert_eq!(reloaded.theme_preference(), ThemePreference::Dark);
-    }
-
-    #[test]
     fn toolbar_theme_preference_applies_and_persists_immediately() {
         let path = temp_config_path("toolbar-theme");
         let mut state = State::load_from_path(path.clone());
@@ -531,7 +512,6 @@ mod tests {
         let reloaded = State::load_from_path(path);
 
         assert_eq!(state.theme_preference(), ThemePreference::Dark);
-        assert_eq!(state.draft_theme_preference(), ThemePreference::Dark);
         assert!(contents.contains("theme = \"dark\""));
         assert_eq!(reloaded.theme_preference(), ThemePreference::Dark);
     }
@@ -567,11 +547,10 @@ mod tests {
 
         let _task = super::update(
             &mut state,
-            Message::Settings(SettingsMessage::ThemePreferenceChanged(
+            Message::Toolbar(ToolbarMessage::ThemePreferenceSelected(
                 ThemePreference::Light,
             )),
         );
-        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
 
         let theme = super::theme(&state).expect("explicit light theme");
         assert!(!theme.extended_palette().is_dark);
@@ -600,10 +579,6 @@ mod tests {
         let path = temp_config_path("session-secret");
         let mut state = State::load_from_path(path.clone());
 
-        let _task = super::update(
-            &mut state,
-            Message::Settings(SettingsMessage::AuthChanged(RpcAuthDraft::SessionSecret)),
-        );
         let _task = super::update(
             &mut state,
             Message::Settings(SettingsMessage::SecretChanged("super-secret".to_owned())),
@@ -661,10 +636,6 @@ mod tests {
 
         let _task = super::update(
             &mut state,
-            Message::Settings(SettingsMessage::AuthChanged(RpcAuthDraft::SessionSecret)),
-        );
-        let _task = super::update(
-            &mut state,
             Message::Settings(SettingsMessage::SecretChanged("super-secret".to_owned())),
         );
         let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
@@ -674,19 +645,21 @@ mod tests {
     }
 
     #[test]
-    fn token_secret_validation_is_exposed_as_field_status() {
+    fn empty_secret_disables_authentication() {
         let mut state = State::initial();
 
         let _task = super::update(
             &mut state,
-            Message::Settings(SettingsMessage::AuthChanged(RpcAuthDraft::SessionSecret)),
+            Message::Settings(SettingsMessage::SecretChanged("super-secret".to_owned())),
         );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::SecretChanged(String::new())),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
 
-        assert_eq!(
-            state.draft_secret_validation_message(),
-            Some("Secret is required for token authentication.")
-        );
-        assert_eq!(state.settings_feedback(), None);
+        assert_eq!(state.applied_auth_label(), "No authentication");
     }
 
     #[test]

@@ -140,13 +140,6 @@ pub(crate) fn toggle_button<'a>(
     button(content).style(move |theme, status| theme::button_variant(theme, status, variant))
 }
 
-pub(crate) fn toggle_text_button(
-    label: impl Into<String>,
-    selected: bool,
-) -> button::Button<'static, Message> {
-    toggle_button(text(label.into()), selected)
-}
-
 pub(crate) fn badge(label: impl Into<String>, variant: BadgeVariant) -> Element<'static, Message> {
     container(text(label.into()).size(crate::ui::tokens::TOKENS.typography.caption))
         .padding([crate::ui::tokens::S1 / 2.0, crate::ui::tokens::S2])
