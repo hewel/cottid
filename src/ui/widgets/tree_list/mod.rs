@@ -31,7 +31,6 @@
 mod style;
 mod types;
 
-use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, row, space, text};
 use iced::{Alignment, Element, Length};
 

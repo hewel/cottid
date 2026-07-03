@@ -190,6 +190,10 @@ impl DownloadItem {
         &self.status
     }
 
+    pub fn set_status(&mut self, status: DownloadStatus) {
+        self.status = status;
+    }
+
     pub fn directory(&self) -> Option<&str> {
         self.directory.as_deref()
     }

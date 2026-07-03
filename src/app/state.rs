@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::app::scheduler::{RefreshDirtyFlags, RefreshScheduler, RefreshTrigger};
@@ -20,6 +20,8 @@ use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
 use crate::util::format::{
     format_bytes, format_count, format_eta, format_eta_duration, format_progress, format_speed,
 };
+
+const ACTION_TRANSITION_MISSING_REFRESH_LIMIT: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
@@ -170,15 +172,23 @@ pub struct DownloadRowView {
     metadata: String,
     progress: String,
     progress_per_mille: u16,
-    download_speed: String,
-    upload_speed: String,
-    eta: String,
+    trailing: DownloadRowTrailing,
     can_pause: bool,
     can_unpause: bool,
     can_remove: bool,
     pending: bool,
     error: Option<String>,
     selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadRowTrailing {
+    Speed {
+        download: String,
+        upload: String,
+        eta: String,
+    },
+    Status(String),
 }
 
 impl DownloadRowView {
@@ -211,16 +221,8 @@ impl DownloadRowView {
         f32::from(self.progress_per_mille) / 1000.0
     }
 
-    pub fn download_speed(&self) -> &str {
-        &self.download_speed
-    }
-
-    pub fn upload_speed(&self) -> &str {
-        &self.upload_speed
-    }
-
-    pub fn eta(&self) -> &str {
-        &self.eta
+    pub fn trailing(&self) -> &DownloadRowTrailing {
+        &self.trailing
     }
 
     pub fn can_pause(&self) -> bool {
@@ -433,6 +435,7 @@ impl State {
                 active_order: Vec::new(),
                 waiting_order: Vec::new(),
                 stopped_order: Vec::new(),
+                action_transitions: HashMap::new(),
                 merge_tick: 0,
                 filter: selected_filter,
                 refresh_state: RefreshState::NeverRefreshed,
@@ -704,10 +707,20 @@ impl State {
 
     pub fn download_rows(&self) -> Vec<DownloadRowView> {
         self.downloads
-            .ordered_items_for_filter(self.downloads.filter)
+            .ordered_records_for_filter(self.downloads.filter)
             .into_iter()
-            .map(|item| {
-                download_row_view(item, &self.actions, self.selection.selected_gid.as_ref())
+            .map(|record| {
+                let transition = self
+                    .downloads
+                    .action_transitions
+                    .get(record.item.gid())
+                    .copied();
+                download_row_view(
+                    &record.item,
+                    transition,
+                    &self.actions,
+                    self.selection.selected_gid.as_ref(),
+                )
             })
             .collect()
     }
@@ -788,7 +801,11 @@ impl State {
 
     #[cfg(test)]
     pub fn download_items(&self) -> Vec<&DownloadItem> {
-        self.downloads.ordered_items_for_filter(DownloadFilter::All)
+        self.downloads
+            .ordered_records_for_filter(DownloadFilter::All)
+            .into_iter()
+            .map(|record| &record.item)
+            .collect()
     }
 
     pub fn status_text(&self) -> String {
@@ -916,7 +933,7 @@ impl State {
                 let Some(request) = self.scheduler.complete_success(generation) else {
                     return;
                 };
-                self.merge_download_snapshot(request, snapshot);
+                self.merge_download_snapshot(generation, request, snapshot);
                 self.clear_missing_selection();
                 self.downloads.refresh_state = RefreshState::Fresh;
                 self.downloads.feedback = None;
@@ -1271,8 +1288,30 @@ impl State {
         self.actions.generation += 1;
         self.actions.feedback = None;
         self.actions.pending = Some(action.clone());
+        self.apply_pending_action_transition(&action);
 
         Some((self.actions.generation, settings, action))
+    }
+
+    fn apply_pending_action_transition(&mut self, action: &RunningAction) {
+        match action {
+            RunningAction::Pause(gid) => {
+                self.downloads.action_transitions.insert(
+                    gid.clone(),
+                    ActionTransition::new(ActionTransitionKind::Pausing, self.downloads.generation),
+                );
+            }
+            RunningAction::Unpause(gid) => {
+                self.downloads.action_transitions.insert(
+                    gid.clone(),
+                    ActionTransition::new(
+                        ActionTransitionKind::Resuming,
+                        self.downloads.generation,
+                    ),
+                );
+            }
+            RunningAction::Remove(_) | RunningAction::PurgeStopped => {}
+        }
     }
 
     pub(super) fn finish_action(
@@ -1285,18 +1324,25 @@ impl State {
             return false;
         }
 
-        self.actions.pending = None;
+        let pending = self.actions.pending.take();
 
         match result {
             Ok(()) => {
                 self.actions.feedback = None;
                 self.downloads.feedback = None;
-                true
+                let should_refresh = pending
+                    .as_ref()
+                    .is_some_and(RunningAction::starts_immediate_refresh);
+                if let Some(action) = pending {
+                    self.apply_successful_action(action);
+                }
+                should_refresh
             }
             Err(error) => {
                 let message = error.display_message().to_owned();
                 match target {
                     ActionTarget::Download(gid) => {
+                        self.downloads.action_transitions.remove(&gid);
                         self.set_item_error(&gid, message);
                     }
                     ActionTarget::PurgeStopped => {
@@ -1306,6 +1352,56 @@ impl State {
                 false
             }
         }
+    }
+
+    fn apply_successful_action(&mut self, action: RunningAction) {
+        match action {
+            RunningAction::Pause(gid) => self.apply_pause_success(gid),
+            RunningAction::Unpause(gid) => self.apply_unpause_success(gid),
+            RunningAction::Remove(gid) => self.apply_remove_success(&gid),
+            RunningAction::PurgeStopped => self.scheduler.mark_dirty(RefreshDirtyFlags {
+                stopped: true,
+                ..RefreshDirtyFlags::default()
+            }),
+        }
+    }
+
+    fn apply_pause_success(&mut self, gid: Gid) {
+        if let Some(record) = self.downloads.items_by_gid.get_mut(&gid) {
+            record.item.set_status(DownloadStatus::Paused);
+        }
+
+        self.downloads
+            .move_to_section(&gid, DownloadSection::Waiting);
+        self.downloads.action_transitions.insert(
+            gid.clone(),
+            ActionTransition::new(
+                ActionTransitionKind::PauseAccepted,
+                self.downloads.generation,
+            ),
+        );
+    }
+
+    fn apply_unpause_success(&mut self, gid: Gid) {
+        self.downloads.action_transitions.insert(
+            gid.clone(),
+            ActionTransition::new(ActionTransitionKind::Resuming, self.downloads.generation),
+        );
+    }
+
+    fn apply_remove_success(&mut self, gid: &Gid) {
+        self.downloads.remove_gid(gid);
+        if self.selection.selected_gid.as_ref() == Some(gid) {
+            self.selection.selected_gid = None;
+            self.selection.file_tree_gid = None;
+            self.selection.file_tree = TreeState::default();
+        }
+        self.scheduler.mark_dirty(RefreshDirtyFlags {
+            active: true,
+            waiting: true,
+            stopped: true,
+            ..RefreshDirtyFlags::default()
+        });
     }
 
     pub(super) fn open_settings(&mut self) {
@@ -1789,6 +1885,7 @@ impl State {
 
     fn merge_download_snapshot(
         &mut self,
+        generation: u64,
         request: BatchRefreshRequest,
         snapshot: DownloadSnapshot,
     ) {
@@ -1800,16 +1897,42 @@ impl State {
         let mut active_order = Vec::new();
         let mut waiting_order = Vec::new();
         let mut stopped_order = Vec::new();
+        let mut seen_gids = HashSet::new();
+        let pending_action_gid = self
+            .actions
+            .pending
+            .as_ref()
+            .and_then(RunningAction::gid)
+            .cloned();
 
         for item in items {
             let gid = item.gid().clone();
-            match DownloadSection::from_status(item.status()) {
+            seen_gids.insert(gid.clone());
+            let transition = self.downloads.action_transitions.get(&gid).copied();
+            let accepts_status = transition
+                .is_none_or(|transition| transition.accepts_snapshot_status(item.status()));
+
+            if accepts_status && pending_action_gid.as_ref() != Some(&gid) {
+                self.downloads.action_transitions.remove(&gid);
+            }
+
+            let section = if accepts_status {
+                DownloadSection::from_status(item.status())
+            } else {
+                transition
+                    .map(ActionTransition::display_section)
+                    .unwrap_or_else(|| DownloadSection::from_status(item.status()))
+            };
+            match section {
                 DownloadSection::Active => active_order.push(gid.clone()),
                 DownloadSection::Waiting => waiting_order.push(gid.clone()),
                 DownloadSection::Stopped => stopped_order.push(gid.clone()),
             }
 
             if let Some(record) = self.downloads.items_by_gid.get_mut(&gid) {
+                if !accepts_status {
+                    continue;
+                }
                 let previous_status = record.item.status().clone();
                 record.merge(item, merge_tick);
                 let intent = notification_intent_for_transition(
@@ -1831,6 +1954,7 @@ impl State {
             self.merge_selected_detail(detail, merge_tick);
         }
         self.initialize_file_tree_for_selected_download();
+        self.reconcile_missing_action_transitions(generation, &request, &seen_gids);
 
         if request.include_active() {
             self.downloads.active_order = active_order;
@@ -1844,11 +1968,56 @@ impl State {
         self.downloads.retain_ordered_records();
     }
 
+    fn reconcile_missing_action_transitions(
+        &mut self,
+        generation: u64,
+        request: &BatchRefreshRequest,
+        seen_gids: &HashSet<Gid>,
+    ) {
+        let selected_gid = self.selection.selected_gid.clone();
+        let mut expired = Vec::new();
+
+        for (gid, transition) in &mut self.downloads.action_transitions {
+            if seen_gids.contains(gid)
+                || !transition.is_affected_by(request)
+                || generation <= transition.created_after_generation
+            {
+                continue;
+            }
+
+            transition.missing_refreshes = transition.missing_refreshes.saturating_add(1);
+            if transition.missing_refreshes <= ACTION_TRANSITION_MISSING_REFRESH_LIMIT {
+                continue;
+            }
+
+            expired.push(gid.clone());
+        }
+
+        for gid in expired {
+            self.downloads.remove_gid(&gid);
+            if selected_gid.as_ref() == Some(&gid) {
+                self.selection.selected_gid = None;
+                self.selection.file_tree_gid = None;
+                self.selection.file_tree = TreeState::default();
+            }
+        }
+    }
+
     fn merge_selected_detail(&mut self, detail: DownloadDetail, merge_tick: u64) {
         let gid = detail.item().gid().clone();
         let item = detail.item().clone();
+        let transition = self.downloads.action_transitions.get(&gid).copied();
+        let accepts_status =
+            transition.is_none_or(|transition| transition.accepts_snapshot_status(item.status()));
+        if accepts_status {
+            self.downloads.action_transitions.remove(&gid);
+        }
 
         if let Some(record) = self.downloads.items_by_gid.get_mut(&gid) {
+            if !accepts_status {
+                record.detail = Some(detail);
+                return;
+            }
             record.merge(item, merge_tick);
             record.detail = Some(detail);
             return;
@@ -1887,6 +2056,7 @@ impl State {
         self.downloads.active_order.clear();
         self.downloads.waiting_order.clear();
         self.downloads.stopped_order.clear();
+        self.downloads.action_transitions.clear();
         self.downloads.refresh_state = RefreshState::NeverRefreshed;
         self.downloads.feedback = None;
         self.actions.pending = None;
@@ -2023,6 +2193,7 @@ struct DownloadsState {
     active_order: Vec<Gid>,
     waiting_order: Vec<Gid>,
     stopped_order: Vec<Gid>,
+    action_transitions: HashMap<Gid, ActionTransition>,
     merge_tick: u64,
     filter: DownloadFilter,
     refresh_state: RefreshState,
@@ -2036,7 +2207,7 @@ impl DownloadsState {
             && self.stopped_order.is_empty()
     }
 
-    fn ordered_items_for_filter(&self, filter: DownloadFilter) -> Vec<&DownloadItem> {
+    fn ordered_records_for_filter(&self, filter: DownloadFilter) -> Vec<&DownloadRecord> {
         let mut items = Vec::new();
 
         match filter {
@@ -2086,7 +2257,7 @@ impl DownloadsState {
 
     fn push_ordered_matches<'a>(
         &'a self,
-        items: &mut Vec<&'a DownloadItem>,
+        items: &mut Vec<&'a DownloadRecord>,
         order: &[Gid],
         matches_status: impl Fn(&DownloadStatus) -> bool,
     ) {
@@ -2095,18 +2266,125 @@ impl DownloadsState {
                 continue;
             };
             if matches_status(record.item.status()) {
-                items.push(&record.item);
+                items.push(record);
             }
         }
     }
 
     fn retain_ordered_records(&mut self) {
+        for gid in self.action_transitions.keys() {
+            if !self.active_order.contains(gid)
+                && !self.waiting_order.contains(gid)
+                && !self.stopped_order.contains(gid)
+            {
+                match self
+                    .items_by_gid
+                    .get(gid)
+                    .map(|record| DownloadSection::from_status(record.item.status()))
+                {
+                    Some(DownloadSection::Active) => self.active_order.push(gid.clone()),
+                    Some(DownloadSection::Waiting) => self.waiting_order.push(gid.clone()),
+                    Some(DownloadSection::Stopped) => self.stopped_order.push(gid.clone()),
+                    None => {}
+                }
+            }
+        }
+
         self.items_by_gid.retain(|gid, _| {
             self.active_order.contains(gid)
                 || self.waiting_order.contains(gid)
                 || self.stopped_order.contains(gid)
         });
     }
+
+    fn move_to_section(&mut self, gid: &Gid, section: DownloadSection) {
+        self.remove_gid_from_orders(gid);
+        match section {
+            DownloadSection::Active => self.active_order.push(gid.clone()),
+            DownloadSection::Waiting => self.waiting_order.push(gid.clone()),
+            DownloadSection::Stopped => self.stopped_order.push(gid.clone()),
+        }
+    }
+
+    fn remove_gid(&mut self, gid: &Gid) {
+        self.items_by_gid.remove(gid);
+        self.action_transitions.remove(gid);
+        self.remove_gid_from_orders(gid);
+    }
+
+    fn remove_gid_from_orders(&mut self, gid: &Gid) {
+        self.active_order.retain(|candidate| candidate != gid);
+        self.waiting_order.retain(|candidate| candidate != gid);
+        self.stopped_order.retain(|candidate| candidate != gid);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ActionTransition {
+    kind: ActionTransitionKind,
+    missing_refreshes: u8,
+    created_after_generation: u64,
+}
+
+impl ActionTransition {
+    fn new(kind: ActionTransitionKind, created_after_generation: u64) -> Self {
+        Self {
+            kind,
+            missing_refreshes: 0,
+            created_after_generation,
+        }
+    }
+
+    fn is_affected_by(self, request: &BatchRefreshRequest) -> bool {
+        match self.kind {
+            ActionTransitionKind::Pausing
+            | ActionTransitionKind::PauseAccepted
+            | ActionTransitionKind::Resuming => {
+                request.include_active() || request.include_waiting()
+            }
+        }
+    }
+
+    fn accepts_snapshot_status(self, status: &DownloadStatus) -> bool {
+        match self.kind {
+            ActionTransitionKind::Pausing | ActionTransitionKind::PauseAccepted => {
+                matches!(
+                    status,
+                    DownloadStatus::Paused
+                        | DownloadStatus::Complete
+                        | DownloadStatus::Error
+                        | DownloadStatus::Removed
+                        | DownloadStatus::Unknown(_)
+                )
+            }
+            ActionTransitionKind::Resuming => {
+                matches!(
+                    status,
+                    DownloadStatus::Active
+                        | DownloadStatus::Waiting
+                        | DownloadStatus::Complete
+                        | DownloadStatus::Error
+                        | DownloadStatus::Removed
+                        | DownloadStatus::Unknown(_)
+                )
+            }
+        }
+    }
+
+    fn display_section(self) -> DownloadSection {
+        match self.kind {
+            ActionTransitionKind::Pausing
+            | ActionTransitionKind::PauseAccepted
+            | ActionTransitionKind::Resuming => DownloadSection::Waiting,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionTransitionKind {
+    Pausing,
+    PauseAccepted,
+    Resuming,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2238,6 +2516,10 @@ impl RunningAction {
     fn requires_confirmation(&self) -> bool {
         matches!(self, Self::Remove(_) | Self::PurgeStopped)
     }
+
+    fn starts_immediate_refresh(&self) -> bool {
+        matches!(self, Self::Remove(_) | Self::PurgeStopped)
+    }
 }
 
 fn connection_label(status: ConnectionStatus) -> &'static str {
@@ -2251,6 +2533,7 @@ fn connection_label(status: ConnectionStatus) -> &'static str {
 
 fn download_row_view(
     item: &DownloadItem,
+    transition: Option<ActionTransition>,
     actions: &ActionsState,
     selected_gid: Option<&Gid>,
 ) -> DownloadRowView {
@@ -2260,7 +2543,10 @@ fn download_row_view(
         .and_then(RunningAction::gid)
         .is_some_and(|gid| gid == item.gid());
     let action_available = actions.pending.is_none();
-    let speed = row_speed_parts(item);
+    let resuming = matches!(
+        transition.map(|transition| transition.kind),
+        Some(ActionTransitionKind::Resuming)
+    );
 
     DownloadRowView {
         name: download_name(item),
@@ -2270,11 +2556,10 @@ fn download_row_view(
         metadata: download_card_metadata(item),
         progress: progress_text(item),
         progress_per_mille: progress_per_mille(item),
-        download_speed: speed.download,
-        upload_speed: speed.upload,
-        eta: speed.eta,
-        can_pause: action_available && matches!(item.status(), DownloadStatus::Active),
+        trailing: download_row_trailing(item, transition),
+        can_pause: action_available && !resuming && matches!(item.status(), DownloadStatus::Active),
         can_unpause: action_available
+            && !resuming
             && matches!(
                 item.status(),
                 DownloadStatus::Paused | DownloadStatus::Waiting
@@ -2288,6 +2573,43 @@ fn download_row_view(
         error: item.command_error().map(str::to_owned),
         selected: selected_gid.is_some_and(|gid| gid == item.gid()),
     }
+}
+
+fn download_row_trailing(
+    item: &DownloadItem,
+    transition: Option<ActionTransition>,
+) -> DownloadRowTrailing {
+    if matches!(
+        transition.map(|transition| transition.kind),
+        Some(ActionTransitionKind::Pausing)
+    ) {
+        return DownloadRowTrailing::Status("Pausing".to_owned());
+    }
+
+    if matches!(
+        transition.map(|transition| transition.kind),
+        Some(ActionTransitionKind::PauseAccepted)
+    ) {
+        return DownloadRowTrailing::Status("Paused".to_owned());
+    }
+
+    if matches!(
+        transition.map(|transition| transition.kind),
+        Some(ActionTransitionKind::Resuming)
+    ) {
+        return DownloadRowTrailing::Status("Resuming".to_owned());
+    }
+
+    if matches!(item.status(), DownloadStatus::Active) {
+        let speed = row_speed_parts(item);
+        return DownloadRowTrailing::Speed {
+            download: speed.download,
+            upload: speed.upload,
+            eta: speed.eta,
+        };
+    }
+
+    DownloadRowTrailing::Status(item.status().display_label().to_owned())
 }
 
 fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
@@ -2446,18 +2768,13 @@ fn file_icon_for_item(item: &DownloadItem) -> FileIcon {
 fn download_card_metadata(item: &DownloadItem) -> String {
     if let Some(folder) = folder_download(item) {
         return format!(
-            "{} | {} | GID {}",
+            "{} | GID {}",
             file_count_label(folder.file_count),
-            item.status().display_label(),
             item.gid().as_str()
         );
     }
 
-    format!(
-        "{} | GID {}",
-        item.status().display_label(),
-        item.gid().as_str()
-    )
+    format!("GID {}", item.gid().as_str())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

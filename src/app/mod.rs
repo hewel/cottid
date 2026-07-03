@@ -16,8 +16,8 @@ pub use message::{
 #[cfg(test)]
 pub use state::NotificationOutcome;
 pub use state::{
-    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, FeedbackTone, FileIcon,
-    FormFeedback, PendingActionConfirmation, RefreshState, State,
+    ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowTrailing, DownloadRowView,
+    FeedbackTone, FileIcon, FormFeedback, PendingActionConfirmation, RefreshState, State,
 };
 
 pub fn run() -> iced::Result {
@@ -80,9 +80,9 @@ mod tests {
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadsMessage, FeedbackTone, FileIcon, Message, NotificationOutcome,
-        PendingActionConfirmation, RefreshInvalidation, RefreshState, SelectionMessage,
-        SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
+        DownloadFilter, DownloadRowTrailing, DownloadsMessage, FeedbackTone, FileIcon, Message,
+        NotificationOutcome, PendingActionConfirmation, RefreshInvalidation, RefreshState,
+        SelectionMessage, SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
     };
 
     #[test]
@@ -1361,7 +1361,7 @@ mod tests {
     }
 
     #[test]
-    fn action_success_triggers_snapshot_refresh_without_retrying_command() {
+    fn pause_success_does_not_fetch_new_list_immediately() {
         let mut state = State::initial();
         connect(&mut state);
         apply_snapshot(
@@ -1384,8 +1384,387 @@ mod tests {
             }),
         );
 
-        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+        assert_eq!(state.refresh_state(), RefreshState::Fresh);
         assert!(!state.download_rows()[0].pending());
+        assert_eq!(state.begin_scheduled_downloads_refresh(), None);
+    }
+
+    #[test]
+    fn remove_success_triggers_snapshot_refresh_without_retrying_command() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::ConfirmDestructiveActionsChanged(false)),
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+        assert!(state.download_rows().is_empty());
+    }
+
+    #[test]
+    fn pause_in_flight_ignores_pre_action_missing_refresh_and_shows_pausing() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let (generation, _, _) = state.begin_downloads_refresh().expect("refresh");
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let rows = state.download_rows();
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Pausing".to_owned())
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation,
+                result: Ok(snapshot_with_items(Vec::new())),
+            }),
+        );
+
+        let rows = state.download_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Pausing".to_owned())
+        );
+    }
+
+    #[test]
+    fn pause_transition_survives_several_post_action_missing_refreshes() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        for _ in 0..5 {
+            let (generation, _, _) = state.begin_downloads_refresh().expect("refresh");
+            let _task = super::update(
+                &mut state,
+                Message::Downloads(DownloadsMessage::RefreshFinished {
+                    generation,
+                    result: Ok(snapshot_with_items(Vec::new())),
+                }),
+            );
+        }
+
+        let rows = state.download_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Pausing".to_owned())
+        );
+    }
+
+    #[test]
+    fn pause_success_shows_paused_in_speed_slot_without_waiting_for_snapshot() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+
+        let rows = state.download_rows();
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Paused".to_owned())
+        );
+        assert!(rows[0].can_unpause());
+    }
+
+    #[test]
+    fn stale_active_snapshot_does_not_clear_pause_success_transition() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let rows = state.download_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Paused".to_owned())
+        );
+    }
+
+    #[test]
+    fn confirmed_paused_snapshot_clears_pause_transition() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Paused)],
+        );
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        assert!(matches!(
+            state.download_rows()[0].trailing(),
+            DownloadRowTrailing::Speed { .. }
+        ));
+    }
+
+    #[test]
+    fn unpause_success_shows_resuming_in_speed_slot_without_waiting_for_snapshot() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("paused-gid", DownloadStatus::Paused)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Unpause(
+                Gid::new("paused-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("paused-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+
+        let rows = state.download_rows();
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Resuming".to_owned())
+        );
+        assert!(!rows[0].can_unpause());
+    }
+
+    #[test]
+    fn stale_paused_snapshot_does_not_clear_resume_transition() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("paused-gid", DownloadStatus::Paused)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Unpause(
+                Gid::new("paused-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("paused-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+        apply_snapshot(
+            &mut state,
+            vec![download_item("paused-gid", DownloadStatus::Paused)],
+        );
+
+        let rows = state.download_rows();
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Resuming".to_owned())
+        );
+    }
+
+    #[test]
+    fn confirmed_active_snapshot_clears_resume_transition() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("paused-gid", DownloadStatus::Paused)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Unpause(
+                Gid::new("paused-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("paused-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+        apply_snapshot(
+            &mut state,
+            vec![download_item("paused-gid", DownloadStatus::Active)],
+        );
+
+        assert!(matches!(
+            state.download_rows()[0].trailing(),
+            DownloadRowTrailing::Speed { .. }
+        ));
+    }
+
+    #[test]
+    fn remove_success_hides_row_and_clears_selected_detail() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let gid = Gid::new("active-gid").expect("valid gid");
+        let _task = super::update(
+            &mut state,
+            Message::Selection(SelectionMessage::Select(gid.clone())),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::ConfirmDestructiveActionsChanged(false)),
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(gid.clone())),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(gid),
+                result: Ok(()),
+            }),
+        );
+
+        assert!(state.download_rows().is_empty());
+        assert_eq!(state.selected_download_detail(), None);
+    }
+
+    #[test]
+    fn pause_transition_prunes_after_extended_missing_refresh_grace() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Finished {
+                generation: 1,
+                target: ActionTarget::Download(Gid::new("active-gid").expect("valid gid")),
+                result: Ok(()),
+            }),
+        );
+        for _ in 0..6 {
+            apply_snapshot(&mut state, Vec::new());
+        }
+
+        assert!(state.download_rows().is_empty());
     }
 
     #[test]
@@ -1420,6 +1799,10 @@ mod tests {
             state.download_rows()[0].error(),
             Some("aria2 returned an RPC error.")
         );
+        assert!(matches!(
+            state.download_rows()[0].trailing(),
+            DownloadRowTrailing::Speed { .. }
+        ));
     }
 
     #[test]
@@ -1721,7 +2104,7 @@ mod tests {
 
         assert_eq!(rows[0].name(), "Show Pack");
         assert_eq!(rows[0].file_icon(), FileIcon::Folder);
-        assert_eq!(rows[0].metadata(), "3 files | Active | GID folder-gid");
+        assert_eq!(rows[0].metadata(), "3 files | GID folder-gid");
     }
 
     #[test]
@@ -1867,7 +2250,7 @@ mod tests {
 
         assert_eq!(rows[0].name(), "movie.mkv");
         assert_eq!(rows[0].file_icon(), FileIcon::Video);
-        assert_eq!(rows[0].metadata(), "Active | GID loose-gid");
+        assert_eq!(rows[0].metadata(), "GID loose-gid");
     }
 
     #[test]
@@ -1887,7 +2270,7 @@ mod tests {
 
         assert_eq!(rows[0].name(), "movie.mkv");
         assert_eq!(rows[0].file_icon(), FileIcon::Video);
-        assert_eq!(rows[0].metadata(), "Active | GID split-gid");
+        assert_eq!(rows[0].metadata(), "GID split-gid");
     }
 
     #[test]
@@ -1993,9 +2376,14 @@ mod tests {
         assert_eq!(state.download_items().len(), 1);
         let rows = state.download_rows();
         assert_eq!(rows[0].name(), "active-gid.bin");
-        assert_eq!(rows[0].download_speed(), "512 B/s");
-        assert_eq!(rows[0].upload_speed(), "0 B/s");
-        assert_eq!(rows[0].eta(), "2s");
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Speed {
+                download: "512 B/s".to_owned(),
+                upload: "0 B/s".to_owned(),
+                eta: "2s".to_owned(),
+            }
+        );
         assert_eq!(state.refresh_state(), RefreshState::Fresh);
     }
 
@@ -2015,9 +2403,45 @@ mod tests {
 
         let rows = state.download_rows();
 
-        assert_eq!(rows[0].download_speed(), "512 B/s");
-        assert_eq!(rows[0].upload_speed(), "128 B/s");
-        assert_eq!(rows[0].eta(), "2s");
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Speed {
+                download: "512 B/s".to_owned(),
+                upload: "128 B/s".to_owned(),
+                eta: "2s".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn non_active_rows_show_status_in_the_speed_slot() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("waiting-gid", DownloadStatus::Waiting),
+                download_item("error-gid", DownloadStatus::Error),
+            ],
+        );
+
+        let rows = state.download_rows();
+
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Waiting".to_owned())
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::FilterChanged(DownloadFilter::Complete)),
+        );
+        let rows = state.download_rows();
+
+        assert_eq!(
+            rows[0].trailing(),
+            &DownloadRowTrailing::Status("Error".to_owned())
+        );
     }
 
     #[test]

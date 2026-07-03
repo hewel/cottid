@@ -2,8 +2,8 @@ use iced::widget::{column, container, mouse_area, progress_bar, row, scrollable,
 use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
-    ActionMessage, AddMessage, DownloadDetailView, DownloadRowView, Message, RefreshState,
-    SelectionMessage, State,
+    ActionMessage, AddMessage, DownloadDetailView, DownloadRowTrailing, DownloadRowView, Message,
+    RefreshState, SelectionMessage, State,
 };
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
@@ -78,12 +78,23 @@ fn search_box() -> Element<'static, Message> {
 }
 
 fn download_card_speed(row: &DownloadRowView) -> Element<'static, Message> {
-    ui::transfer_speed_summary_end_aligned(
-        row.download_speed().to_owned(),
-        row.upload_speed().to_owned(),
-        Some(row.eta().to_owned()),
-        ui::TransferSpeedTone::Default,
-    )
+    match row.trailing() {
+        DownloadRowTrailing::Speed {
+            download,
+            upload,
+            eta,
+        } => ui::transfer_speed_summary_end_aligned(
+            download.to_owned(),
+            upload.to_owned(),
+            Some(eta.to_owned()),
+            ui::TransferSpeedTone::Default,
+        ),
+        DownloadRowTrailing::Status(status) => {
+            ui::muted_panel(text(status.to_owned()).size(13).style(theme::muted_text))
+                .padding([8, 10])
+                .into()
+        }
+    }
 }
 
 fn stale_banner(state: &State) -> Element<'_, Message> {
