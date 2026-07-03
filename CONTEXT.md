@@ -46,3 +46,17 @@ field-specific validation or status message.
 
 Inline message attached to a single Field. It describes validation or
 field-specific state and is distinct from modal-level workflow feedback.
+
+## Runtime global option
+
+Live aria2 download-manager setting that Cottid may read or change through the
+connected RPC daemon. It is distinct from local Cottid config and daemon startup
+configuration.
+_Avoid_: aria2 setting, daemon config, aria2.conf option
+
+## New-download default
+
+Cottid-side value applied when creating a new aria2 download. It is not a live
+change to existing downloads unless a separate download action explicitly does
+that.
+_Avoid_: task preset, raw task option

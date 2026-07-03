@@ -5,7 +5,7 @@ should migrate into Cottid. It is a decision aid, not an implementation spec.
 
 Cottid is a desktop `iced` frontend for an external aria2 JSON-RPC daemon. It
 should not copy AriaNg's browser application model or become a full aria2.conf
-editor by default.
+editor.
 
 ## Source Summary
 
@@ -29,10 +29,10 @@ Discovered setting groups:
   behavior, import/export, debug/session flags.
 - RPC connection settings: host, port, protocol, HTTP method, headers, secret,
   alias, and extra RPC profiles.
-- aria2 global settings: options exposed through `aria2.getGlobalOption` and
-  `aria2.changeGlobalOption`.
-- aria2 task/new-download settings: options supplied when adding or changing a
-  task.
+- Runtime global options: live aria2 options exposed through
+  `aria2.getGlobalOption` and `aria2.changeGlobalOption`.
+- New-download defaults and task options: options supplied when adding or
+  changing a download.
 - Session/local-only settings: debug mode, input history, notification history,
   selected/local UI state.
 - UI-only behavior settings: list sorting, after-create navigation, copy
@@ -44,12 +44,12 @@ Discovered setting groups:
 
 | Source Area | Original Key | Category | Meaning | Default Value | Option Type | Recommended Migration Priority | Reason | Target UI Suggestion | Target Config Location | Dependencies / Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| RPC setting | `rpcHost`, `rpcPort`, `rpcInterface`, `protocol` | RPC | Build the aria2 JSON-RPC endpoint. | host `""`, port `6800`, interface `jsonrpc`, protocol `http` | string/enum | Must migrate | Core connection setup, but Cottid should collapse this into one endpoint URL. | URL input | `rpc.profiles` | Keep HTTP(S) endpoint validation; WebSocket is future-only. |
-| RPC setting | `secret` | RPC | aria2 RPC token. | `""` | secret | Must migrate | Required for secured daemons. | password input or session prompt | `rpc.profiles` | Store in keyring or session only; never log/export in plain text. AriaNg base64 is not security. |
-| RPC setting | `rpcAlias` | RPC | Friendly profile name. | `""` | string | Should migrate | Useful once profiles exist; not required for single-profile MVP. | input | `rpc.profiles` | Can default to endpoint host. |
-| RPC setting | `extendRpcServers` | RPC | Additional RPC profiles. | `[]` | list/map | Optional | Valuable for power users, but profile switching is not MVP. | profile manager | `rpc.profiles` | Requires profile selection, per-profile secrets, and config migration. |
+| RPC setting | `rpcHost`, `rpcPort`, `rpcInterface`, `protocol` | RPC | Build the aria2 JSON-RPC endpoint. | host `""`, port `6800`, interface `jsonrpc`, protocol `http` | string/enum | Must migrate | Core connection setup, but Cottid should collapse this into one endpoint URL. | URL input | connection settings | Keep one editable endpoint in v1. Keep HTTP(S) endpoint validation; WebSocket is future-only. |
+| RPC setting | `secret` | RPC | aria2 RPC token. | `""` | secret | Must migrate | Required for secured daemons. | password input or session prompt | connection settings | Follow ADR 0001: keyring-preferred, explicit plaintext fallback, or session-only. Never log/export in plain text. AriaNg base64 is not security. |
+| RPC setting | `rpcAlias` | RPC | Friendly profile name. | `""` | string | Future only | Useful once profiles exist; not required for the single-endpoint v1. | future profile manager | future profiles | Can default to endpoint host when multi-profile support exists. |
+| RPC setting | `extendRpcServers` | RPC | Additional RPC profiles. | `[]` | list/map | Future only | Valuable for power users, but profile switching is not v1. | future profile manager | future profiles | Requires profile selection, per-profile secrets, and config migration. |
 | RPC setting | `httpMethod` | RPC | JSON-RPC request method, GET or POST. | `POST` | enum | Do not migrate | Cottid uses POST; GET adds security and caching risks. | not applicable | not applicable | Keep POST only. |
-| RPC setting | `rpcRequestHeaders` | RPC | Custom headers for RPC requests. | `""` | map/list | Optional | Useful behind reverse proxies, but can leak credentials. | advanced textarea | `rpc.profiles` | Redact in logs/export; validate header syntax. |
+| RPC setting | `rpcRequestHeaders` | RPC | Custom headers for RPC requests. | `""` | map/list | Optional | Useful behind reverse proxies, but can leak credentials. | advanced textarea | connection settings | Redact in logs/export; validate header syntax. |
 | AriaNg app setting | `webSocketReconnectInterval` | RPC/UI | Browser WebSocket reconnect delay. | `5000` ms | duration | Skip for now | Cottid does not use WebSocket RPC in MVP. | hidden config only | not applicable | Reconsider if WebSocket invalidation is added. |
 | AriaNg app setting | `globalStatRefreshInterval` | Refresh | Global speed/stat polling interval. | `1000` ms | duration | Must migrate | Cottid needs refresh cadence. | number input/stepper | `app.settings` | Integrate with central scheduler and backoff. |
 | AriaNg app setting | `downloadTaskRefreshInterval` | Refresh | Task list polling interval. | `1000` ms | duration | Must migrate | Core list freshness setting. | number input/stepper | `app.settings` | Scheduler must prevent concurrent refreshes and discard stale responses. |
@@ -57,7 +57,7 @@ Discovered setting groups:
 | AriaNg app setting | `language` | UI | UI language selection. | `en` | enum | Skip for now | Requires an i18n system. | select | `ui.preferences` | Revisit when localization is real. |
 | AriaNg app setting | `theme` | UI | Light/dark AriaNg theme. | `light` | enum | Do not migrate | Cottid should use local design tokens and system-aware theme architecture, not copy AriaNg theme settings. | not applicable | not applicable | Keep theme separate from this migration. |
 | AriaNg app setting | `debugMode` | Session | Enables debug output. | `false` session-only | boolean | Optional | Useful for diagnostics, but not a normal user setting. | hidden config or diagnostics toggle | `app.session` | Must redact secrets. |
-| AriaNg app setting | `browserNotification` | Notification | Browser notification enablement. | `false` | boolean | Do not migrate | Browser API-specific. | not applicable | not applicable | Replace with native desktop notifications only if approved. |
+| AriaNg app setting | `browserNotification` | Notification | Browser notification enablement. | `false` | boolean | Do not migrate directly | Browser API-specific. | native completion/failure notification toggle | ui preferences | Model a Cottid native completion/failure notification preference in v1, but native OS delivery remains dependency-gated. |
 | AriaNg app setting | `browserNotificationSound` | Notification | Plays sound for browser notifications. | `true` | boolean | Do not migrate | Browser/UI-specific. | not applicable | not applicable | Native notification policy should be separate. |
 | AriaNg app setting | `browserNotificationFrequency` | Notification | Limits browser notification frequency. | `unlimited` | enum | Do not migrate | Browser-notification-specific. | not applicable | not applicable | Native notification throttling can be designed later. |
 | AriaNg app setting | `keyboardShortcuts` | UI | Enables AriaNg shortcuts. | `true` | boolean | Optional | Good desktop feature, but not required before shortcuts exist. | checkbox | `ui.preferences` | Needs shortcut map and accessibility review. |
@@ -74,67 +74,68 @@ Discovered setting groups:
 | AriaNg app setting | `fileListDisplayOrder`, `peerListDisplayOrder` | Detail | Sorts file and peer lists. | `default:asc` | enum | Optional | Useful only after file/peer detail views exist. | sort menu | `ui.preferences` | Depends on selected-download detail model. |
 | Local/session setting | setting history keys | Session | Remembers previous input values such as paths. | max `10` | list | Optional | Nice quality-of-life for path/header inputs. | recent-values menu | `app.session` or `ui.preferences` | Avoid storing secrets or auth headers. |
 | AriaNg app action | import/export settings | App | Imports/exports AriaNg settings JSON. | n/a | action | Skip for now | Useful later, but config schema should stabilize first. | command palette action | `app.settings` | Must omit or redact secrets by default. |
-| aria2 global option | `dir` | Basic | Default download directory. | aria2-defined / required in AriaNg metadata | path | Must migrate | Most important aria2 behavior setting for users. | path input | `aria2.global`, `aria2.taskDefaults` | Uses `getGlobalOption`/`changeGlobalOption`; path is daemon-local, not desktop-local. |
-| aria2 global option | `max-concurrent-downloads` | Basic | Maximum active downloads. | `5` | number | Should migrate | Common queue control. | stepper/input | `aria2.global` | Direct aria2 global option. |
-| aria2 global option | `continue` | Basic | Continue partially downloaded files. | aria2-defined | boolean | Should migrate | Common expectation for resumable downloads. | checkbox | `aria2.global`, `aria2.taskDefaults` | Also valid as task/new-download option. |
-| aria2 global option | `check-integrity` | Basic | Hash-check downloaded files when possible. | `false` | boolean | Optional | Useful but can surprise users with extra work. | checkbox | `aria2.global`, `aria2.taskDefaults` | Also task option. |
-| aria2 global option | `log` | Basic | aria2 daemon log path. | aria2-defined | path | Skip for now | Daemon-side operational setting, not frontend core. | advanced input | `aria2.global` | Path is daemon-local and may be host-specific. |
-| aria2 quick/global option | `max-overall-download-limit` | Advanced / Quick | Global download speed limit. | `0` | bandwidth | Should migrate | Core download-manager control. | bandwidth input / quick limiter | `aria2.global` | Direct `changeGlobalOption`; `0` means unlimited. |
-| aria2 quick/global option | `max-overall-upload-limit` | BitTorrent / Quick | Global upload speed limit. | `0` | bandwidth | Should migrate | Important for torrents and shared networks. | bandwidth input / quick limiter | `aria2.global` | Direct `changeGlobalOption`; `0` means unlimited. |
-| aria2 task option | `out` | HTTP task | Output filename for new HTTP/FTP download. | unknown | string | Should migrate | Common per-download customization. | input | `aria2.taskDefaults` | Send with add URI; new-task only. |
-| aria2 task option | `max-download-limit` | Task | Per-task download speed limit. | `0` | bandwidth | Should migrate | Expected per-download control. | bandwidth input | `aria2.taskDefaults` | Can be changed on existing tasks. |
-| aria2 task option | `max-upload-limit` | BitTorrent task | Per-task upload speed limit. | `0` | bandwidth | Should migrate | Expected for torrent users. | bandwidth input | `aria2.taskDefaults` | Applies to BitTorrent. |
-| aria2 HTTP/task options | `split`, `min-split-size`, `max-connection-per-server` | HTTP task | Connection splitting controls. | `5`, `20M`, `1` | number/size | Optional | Power-user performance tuning. | advanced inputs | `aria2.taskDefaults` | Can affect server load and reliability. |
-| aria2 HTTP/task options | `lowest-speed-limit`, `timeout`, `connect-timeout`, `retry-wait`, `max-tries` | HTTP | Retry/timeout behavior. | `0`, `60`, `60`, `0`, `5` | bandwidth/duration/number | Optional | Useful advanced network tuning, not first-run required. | advanced inputs | `aria2.global`, `aria2.taskDefaults` | Direct aria2 options. |
-| aria2 HTTP/task options | `header`, `referer`, `user-agent` | HTTP | Custom request metadata. | user-agent `aria2/$VERSION` | list/string | Optional | Needed for some sites; easy to misuse. | advanced textarea | `aria2.taskDefaults` | Do not store sensitive headers in history/export. |
-| aria2 HTTP/task options | `http-user`, `http-passwd` | HTTP | HTTP basic auth credentials. | unknown | secret/string | Optional | Needed occasionally, but security-sensitive. | advanced credential fields | `aria2.taskDefaults` | Store carefully; avoid global persistence by default. |
-| aria2 proxy options | `all-proxy`, `http-proxy`, `https-proxy`, `ftp-proxy` | HTTP/FTP/SFTP | Proxy URLs. | unknown | string | Optional | Useful for some environments, but not core. | advanced input | `aria2.global`, `aria2.taskDefaults` | Consider per-profile vs daemon-global ownership. |
-| aria2 proxy credential options | `all-proxy-user`, `all-proxy-passwd`, `http-proxy-user`, `http-proxy-passwd`, `https-proxy-user`, `https-proxy-passwd`, `ftp-proxy-user`, `ftp-proxy-passwd` | HTTP/FTP/SFTP | Proxy credentials. | unknown | secret/string | Skip for now | Security-heavy and uncommon for MVP. | hidden advanced editor | `aria2.global`, `aria2.taskDefaults` | Never include in logs/history/export. |
-| aria2 HTTP option | `checksum` | HTTP task | Expected checksum for verification. | unknown | string | Optional | Useful but specialized. | input | `aria2.taskDefaults` | Validate `algorithm=value` shape. |
-| aria2 HTTP options | `dry-run`, `remote-time`, `reuse-uri`, `uri-selector`, `stream-piece-selector`, `http-accept-gzip`, `http-auth-challenge`, `http-no-cache`, `enable-http-keep-alive`, `enable-http-pipelining`, `use-head`, `save-cookies`, `no-proxy`, `proxy-method` | HTTP | Assorted protocol behavior. | mixed | mixed | Skip for now | Too detailed for normal settings; can live in advanced editor later. | advanced editor | `aria2.global` | Expose only if real users need it. |
-| aria2 FTP/SFTP options | `ftp-user`, `ftp-passwd`, `ftp-pasv`, `ftp-type`, `ftp-reuse-connection`, `ssh-host-key-md` | FTP/SFTP | FTP/SFTP login and transfer behavior. | mixed | mixed | Skip for now | FTP/SFTP is not the likely first migration target. | advanced editor | `aria2.global`, `aria2.taskDefaults` | Credentials are sensitive. |
-| aria2 BitTorrent option | `follow-torrent` | BitTorrent | Whether torrent files are followed. | `true` | enum | Should migrate | Important if adding torrent files. | select | `aria2.global` | Direct global option. |
-| aria2 BitTorrent option | `pause-metadata` | BitTorrent/RPC | Pause magnet metadata downloads. | `false` | boolean | Optional | Useful magnet behavior control. | checkbox | `aria2.global`, `aria2.taskDefaults` | Appears in RPC category and task options. |
-| aria2 BitTorrent options | `seed-ratio`, `seed-time` | BitTorrent task | Stop seeding by ratio/time. | `1.0`, aria2-defined | number/duration | Should migrate | Torrent users expect seeding controls. | inputs | `aria2.global`, `aria2.taskDefaults` | Needs clear unlimited/zero semantics. |
-| aria2 BitTorrent options | `bt-max-peers`, `bt-request-peer-speed-limit`, `bt-remove-unselected-file`, `bt-stop-timeout`, `bt-tracker` | BitTorrent task | Peer, tracker, and cleanup behavior. | mixed | mixed | Optional | Useful but advanced. | advanced inputs/textarea | `aria2.taskDefaults` | Some can be updated on waiting/paused tasks. |
-| aria2 BitTorrent options | `bt-enable-lpd`, `bt-force-encryption`, `bt-require-crypto`, `bt-min-crypto-level`, `bt-save-metadata`, `bt-metadata-only`, `bt-load-saved-metadata`, `bt-exclude-tracker`, `bt-external-ip`, `bt-hash-check-seed`, `enable-peer-exchange` | BitTorrent | Advanced torrent behavior. | mixed | mixed | Skip for now | Too much surface for first settings model. | advanced editor | `aria2.global` | Revisit with torrent-focused release. |
+| aria2 global option | `dir` | Basic | Default download directory. | aria2-defined / required in AriaNg metadata | path | Must migrate | Most important aria2 behavior setting for users. | path input | runtime global options, new-download defaults | Uses `getGlobalOption`/`changeGlobalOption`; path is daemon-local, not desktop-local. |
+| aria2 global option | `max-concurrent-downloads` | Basic | Maximum active downloads. | `5` | number | Must migrate | Common queue control and part of the v1 runtime global option allowlist. | stepper/input | runtime global options | Direct aria2 runtime global option. |
+| aria2 global option | `continue` | Basic | Continue partially downloaded files. | aria2-defined | boolean | Future only | Common expectation for resumable downloads, but outside the first runtime global option allowlist. | checkbox | runtime global options, new-download defaults | Also valid as task/new-download option. |
+| aria2 global option | `check-integrity` | Basic | Hash-check downloaded files when possible. | `false` | boolean | Optional | Useful but can surprise users with extra work. | checkbox | runtime global options, new-download defaults | Also task option. |
+| aria2 global option | `log` | Basic | aria2 daemon log path. | aria2-defined | path | Skip for now | Daemon-side operational setting, not frontend core. | advanced input | runtime global options | Path is daemon-local and may be host-specific. |
+| aria2 quick/global option | `max-overall-download-limit` | Advanced / Quick | Global download speed limit. | `0` | bandwidth | Must migrate | Core download-manager control and part of the v1 runtime global option allowlist. | bandwidth input / quick limiter | runtime global options | Direct `changeGlobalOption`; `0` means unlimited. |
+| aria2 quick/global option | `max-overall-upload-limit` | BitTorrent / Quick | Global upload speed limit. | `0` | bandwidth | Must migrate | Important for torrents and shared networks, and part of the v1 runtime global option allowlist. | bandwidth input / quick limiter | runtime global options | Direct `changeGlobalOption`; `0` means unlimited. |
+| aria2 task option | `out` | HTTP task | Output filename for new HTTP/FTP download. | unknown | string | Must migrate | Common per-download customization and part of the v1 new-download default surface. | input | new-download defaults | Send with add URI; new-download only. |
+| aria2 task option | `max-download-limit` | Task | Per-task download speed limit. | `0` | bandwidth | Must migrate | Expected per-download control and part of the v1 new-download default surface. | bandwidth input | new-download defaults | Can be changed on existing tasks by a separate action later. |
+| aria2 task option | `max-upload-limit` | BitTorrent task | Per-task upload speed limit. | `0` | bandwidth | Must migrate | Expected for torrent users and part of the v1 new-download default surface. | bandwidth input | new-download defaults | Applies to BitTorrent. |
+| aria2 HTTP/task options | `split`, `min-split-size`, `max-connection-per-server` | HTTP task | Connection splitting controls. | `5`, `20M`, `1` | number/size | Optional | Power-user performance tuning. | advanced inputs | new-download defaults | Can affect server load and reliability. |
+| aria2 HTTP/task options | `lowest-speed-limit`, `timeout`, `connect-timeout`, `retry-wait`, `max-tries` | HTTP | Retry/timeout behavior. | `0`, `60`, `60`, `0`, `5` | bandwidth/duration/number | Optional | Useful advanced network tuning, not first-run required. | advanced inputs | runtime global options, new-download defaults | Direct aria2 options. |
+| aria2 HTTP/task options | `header`, `referer`, `user-agent` | HTTP | Custom request metadata. | user-agent `aria2/$VERSION` | list/string | Optional | Needed for some sites; easy to misuse. | advanced textarea | new-download defaults | Do not store sensitive headers in history/export. |
+| aria2 HTTP/task options | `http-user`, `http-passwd` | HTTP | HTTP basic auth credentials. | unknown | secret/string | Optional | Needed occasionally, but security-sensitive. | advanced credential fields | new-download defaults | Store carefully; avoid global persistence by default. |
+| aria2 proxy options | `all-proxy`, `http-proxy`, `https-proxy`, `ftp-proxy` | HTTP/FTP/SFTP | Proxy URLs. | unknown | string | Optional | Useful for some environments, but not core. | advanced input | runtime global options, new-download defaults | Consider per-profile vs daemon-global ownership. |
+| aria2 proxy credential options | `all-proxy-user`, `all-proxy-passwd`, `http-proxy-user`, `http-proxy-passwd`, `https-proxy-user`, `https-proxy-passwd`, `ftp-proxy-user`, `ftp-proxy-passwd` | HTTP/FTP/SFTP | Proxy credentials. | unknown | secret/string | Skip for now | Security-heavy and uncommon for MVP. | hidden advanced editor | runtime global options, new-download defaults | Never include in logs/history/export. |
+| aria2 HTTP option | `checksum` | HTTP task | Expected checksum for verification. | unknown | string | Optional | Useful but specialized. | input | new-download defaults | Validate `algorithm=value` shape. |
+| aria2 HTTP options | `dry-run`, `remote-time`, `reuse-uri`, `uri-selector`, `stream-piece-selector`, `http-accept-gzip`, `http-auth-challenge`, `http-no-cache`, `enable-http-keep-alive`, `enable-http-pipelining`, `use-head`, `save-cookies`, `no-proxy`, `proxy-method` | HTTP | Assorted protocol behavior. | mixed | mixed | Skip for now | Too detailed for normal settings; can live in advanced editor later. | advanced editor | runtime global options | Expose only if real users need it. |
+| aria2 FTP/SFTP options | `ftp-user`, `ftp-passwd`, `ftp-pasv`, `ftp-type`, `ftp-reuse-connection`, `ssh-host-key-md` | FTP/SFTP | FTP/SFTP login and transfer behavior. | mixed | mixed | Skip for now | FTP/SFTP is not the likely first migration target. | advanced editor | runtime global options, new-download defaults | Credentials are sensitive. |
+| aria2 BitTorrent option | `follow-torrent` | BitTorrent | Whether torrent files are followed. | `true` | enum | Should migrate | Important if adding torrent files. | select | runtime global options | Direct runtime global option. |
+| aria2 BitTorrent option | `pause-metadata` | BitTorrent/RPC | Pause magnet metadata downloads. | `false` | boolean | Optional | Useful magnet behavior control. | checkbox | runtime global options, new-download defaults | Appears in RPC category and task options. |
+| aria2 BitTorrent options | `seed-ratio`, `seed-time` | BitTorrent task | Stop seeding by ratio/time. | `1.0`, aria2-defined | number/duration | Should migrate | Torrent users expect seeding controls. | inputs | runtime global options, new-download defaults | Needs clear unlimited/zero semantics. |
+| aria2 BitTorrent options | `bt-max-peers`, `bt-request-peer-speed-limit`, `bt-remove-unselected-file`, `bt-stop-timeout`, `bt-tracker` | BitTorrent task | Peer, tracker, and cleanup behavior. | mixed | mixed | Optional | Useful but advanced. | advanced inputs/textarea | new-download defaults | Some can be updated on waiting/paused tasks. |
+| aria2 BitTorrent options | `bt-enable-lpd`, `bt-force-encryption`, `bt-require-crypto`, `bt-min-crypto-level`, `bt-save-metadata`, `bt-metadata-only`, `bt-load-saved-metadata`, `bt-exclude-tracker`, `bt-external-ip`, `bt-hash-check-seed`, `enable-peer-exchange` | BitTorrent | Advanced torrent behavior. | mixed | mixed | Skip for now | Too much surface for first settings model. | advanced editor | runtime global options | Revisit with torrent-focused release. |
 | aria2 BitTorrent read-only/daemon options | `dht-file-path`, `dht-file-path6`, `dht-listen-port`, `dht-message-timeout`, `enable-dht`, `enable-dht6`, `listen-port`, `peer-id-prefix`, `peer-agent`, `bt-detach-seed-only` | BitTorrent | Daemon/network identity and DHT settings. | mixed | mixed | Do not migrate | Mostly daemon startup or read-only options. | diagnostics only | not applicable | External daemon config owns these. |
-| aria2 Metalink options | `follow-metalink`, `metalink-base-uri`, `metalink-language`, `metalink-location`, `metalink-os`, `metalink-version`, `metalink-preferred-protocol`, `metalink-enable-unique-protocol` | Metalink | Metalink handling and filtering. | mixed | mixed | Skip for now | Lower-priority protocol surface. | advanced editor | `aria2.global`, `aria2.taskDefaults` | Revisit only if Metalink support is a product goal. |
+| aria2 Metalink options | `follow-metalink`, `metalink-base-uri`, `metalink-language`, `metalink-location`, `metalink-os`, `metalink-version`, `metalink-preferred-protocol`, `metalink-enable-unique-protocol` | Metalink | Metalink handling and filtering. | mixed | mixed | Skip for now | Lower-priority protocol surface. | advanced editor | runtime global options, new-download defaults | Revisit only if Metalink support is a product goal. |
 | aria2 RPC global options | `enable-rpc`, `rpc-allow-origin-all`, `rpc-listen-all`, `rpc-listen-port`, `rpc-max-request-size`, `rpc-secure` | RPC | aria2 daemon RPC server settings. | mixed/read-only | mixed | Do not migrate | Cottid connects to an existing daemon; it should not manage daemon startup flags. | diagnostics only | not applicable | May be displayed read-only from `getGlobalOption`. |
-| aria2 RPC global option | `rpc-save-upload-metadata` | RPC | Save uploaded torrent/metalink metadata. | `true` | boolean | Optional | Niche but writable. | advanced checkbox | `aria2.global` | Only if upload/torrent workflows justify it. |
-| aria2 advanced option | `allow-overwrite`, `auto-file-renaming`, `file-allocation` | Advanced/task | File conflict and allocation behavior. | `false`, `true`, `prealloc` | boolean/enum | Should migrate | Directly affects user-visible file outcomes. | checkboxes/select | `aria2.global`, `aria2.taskDefaults` | Explain overwrite risk clearly. |
-| aria2 advanced option | `conditional-get`, `parameterized-uri`, `force-save` | Advanced/task | Specialized add/save behavior. | `false`, `false`, `false` | boolean | Optional | Useful for advanced download creation. | advanced checkboxes | `aria2.taskDefaults` | Present only in advanced task options. |
-| aria2 advanced option | `save-session`, `save-session-interval` | Session | aria2 daemon session persistence. | `""`, `0` | path/duration | Optional | Important for daemon persistence, but owned by daemon config. | advanced input/diagnostics | `aria2.global` | Path is daemon-local; interval is read-only in AriaNg metadata. |
-| aria2 advanced option | `max-download-result`, `keep-unfinished-download-result`, `download-result` | Session/history | aria2 result/history retention. | `1000`, `true`, `default` | number/boolean/enum | Optional | Affects stopped/history list behavior. | advanced inputs | `aria2.global` | Align with Cottid stopped-row retention model. |
-| aria2 advanced option | `always-resume`, `allow-piece-length-change`, `max-resume-failure-tries`, `remove-control-file`, `realtime-chunk-checksum`, `hash-check-only` | Advanced | Resume/checksum/control-file behavior. | mixed | mixed | Skip for now | Powerful but obscure; risk of confusing users. | advanced editor | `aria2.global` | Add only after user demand. |
+| aria2 RPC global option | `rpc-save-upload-metadata` | RPC | Save uploaded torrent/metalink metadata. | `true` | boolean | Optional | Niche but writable. | advanced checkbox | runtime global options | Only if upload/torrent workflows justify it. |
+| aria2 advanced option | `allow-overwrite`, `auto-file-renaming`, `file-allocation` | Advanced/task | File conflict and allocation behavior. | `false`, `true`, `prealloc` | boolean/enum | Should migrate | Directly affects user-visible file outcomes. | checkboxes/select | runtime global options, new-download defaults | Explain overwrite risk clearly. |
+| aria2 advanced option | `conditional-get`, `parameterized-uri`, `force-save` | Advanced/task | Specialized add/save behavior. | `false`, `false`, `false` | boolean | Optional | Useful for advanced download creation. | advanced checkboxes | new-download defaults | Present only in advanced task options. |
+| aria2 advanced option | `save-session`, `save-session-interval` | Session | aria2 daemon session persistence. | `""`, `0` | path/duration | Do not migrate | Important for daemon persistence, but owned by daemon administration rather than Cottid v1. | diagnostics only | not applicable | Path is daemon-local; interval is read-only in AriaNg metadata. |
+| aria2 advanced option | `max-download-result`, `keep-unfinished-download-result`, `download-result` | Session/history | aria2 result/history retention. | `1000`, `true`, `default` | number/boolean/enum | Optional | Affects stopped/history list behavior. | advanced inputs | runtime global options | Align with Cottid stopped-row retention model. |
+| aria2 advanced option | `always-resume`, `allow-piece-length-change`, `max-resume-failure-tries`, `remove-control-file`, `realtime-chunk-checksum`, `hash-check-only` | Advanced | Resume/checksum/control-file behavior. | mixed | mixed | Skip for now | Powerful but obscure; risk of confusing users. | advanced editor | runtime global options | Add only after user demand. |
 | aria2 daemon/console/system options | `daemon`, `conf-path`, `console-log-level`, `log-level`, `enable-color`, `show-console-readout`, `summary-interval`, `quiet`, `truncate-console-readout`, `no-conf`, `event-poll`, `rlimit-nofile`, `dscp`, `async-dns`, `disable-ipv6`, `disk-cache`, `enable-mmap`, `max-mmap-limit`, `min-tls-version`, `socket-recv-buffer-size`, `stop`, `auto-save-interval`, `deferred-input`, `human-readable`, `content-disposition-default-utf8`, `save-not-found`, `no-file-allocation-limit`, `optimize-concurrent-downloads`, `piece-length` | Advanced | Daemon startup, system, and console tuning. | mixed | mixed | Do not migrate | Mostly daemon-owned, read-only, obscure, or operational. | diagnostics only or not applicable | not applicable | Do not turn Cottid into an aria2.conf replacement. |
 
 ## Recommended Migration Strategy
 
 ### 1. Minimal viable settings
 
-Implement only the settings needed to connect, refresh, and create usable
-downloads:
+Implement only the settings needed to connect, refresh, create usable downloads,
+and expose the first narrow runtime control surface:
 
 - RPC endpoint URL derived from AriaNg's `rpcHost`, `rpcPort`,
-  `rpcInterface`, and `protocol`, stored as one `rpc.profiles` endpoint.
-- RPC secret as secure or session auth, not AriaNg-style base64 config.
+  `rpcInterface`, and `protocol`, stored as one editable endpoint.
+- RPC secret using ADR 0001 storage: keyring-preferred, explicit plaintext
+  fallback, or session-only. Do not use AriaNg-style base64 config.
 - Polling intervals mapped from `globalStatRefreshInterval` and
   `downloadTaskRefreshInterval`, wired through the central refresh scheduler.
-- Default download directory `dir`.
-- Basic new-task options: `dir`, `out`, `max-download-limit`.
+- Runtime global options: `dir`, `max-concurrent-downloads`,
+  `max-overall-download-limit`, and `max-overall-upload-limit`.
+- New-download defaults: `dir`, `out`, `max-download-limit`, and
+  `max-upload-limit`.
 - Confirmation preference for destructive removal: `confirmTaskRemoval`.
+- Cottid native completion/failure notification preference. Native OS delivery
+  remains dependency-gated.
 
 ### 2. Practical default settings
 
-Add settings most real users expect after MVP:
+Add settings most real users expect after v1:
 
-- Global speed limits: `max-overall-download-limit`,
-  `max-overall-upload-limit`.
-- Queue/concurrency: `max-concurrent-downloads`.
 - Resume/file behavior: `continue`, `allow-overwrite`,
   `auto-file-renaming`, `file-allocation`.
-- Per-task upload limit for torrents: `max-upload-limit`.
 - Torrent basics: `follow-torrent`, `seed-ratio`, `seed-time`.
 - Sort preferences for task lists once sorting exists.
 
@@ -147,9 +148,8 @@ Hide these behind an advanced mode or advanced task editor:
 - Request metadata: `header`, `referer`, `user-agent`, `checksum`.
 - Proxy options, with special care for proxy credentials.
 - Torrent peer/tracker controls.
-- aria2 history/session retention: `max-download-result`, `download-result`,
-  `save-session`.
-- Optional raw aria2 global editor for selected writable options only.
+- aria2 history retention: `max-download-result`, `download-result`.
+- Selected modeled runtime global options only. Do not add a raw option editor.
 
 ### 4. Settings to skip
 
@@ -160,6 +160,8 @@ Do not migrate unless there is a strong product reason:
 - Browser transport settings: `httpMethod=GET`, WebSocket reconnect interval.
 - aria2 daemon startup/RPC server settings: `enable-rpc`,
   `rpc-listen-port`, `rpc-listen-all`, `rpc-secure`, `daemon`, `conf-path`.
+- aria2 daemon session administration: `save-session`, `save-session-interval`,
+  and `aria2.saveSession`.
 - Console/system tuning and read-only daemon internals.
 - Metalink and FTP/SFTP settings until those protocols become deliberate
   feature targets.
@@ -173,17 +175,20 @@ Do not migrate unless there is a strong product reason:
 - [ ] `secret` - needed for secured aria2 daemons, with secure/session storage.
 - [ ] `globalStatRefreshInterval` - global stats refresh cadence.
 - [ ] `downloadTaskRefreshInterval` - task list refresh cadence.
-- [ ] `dir` - default daemon-side download directory.
+- [ ] `dir` - daemon-side download directory, as both runtime global option and
+  new-download default.
+- [ ] `max-concurrent-downloads` - runtime global queue control.
+- [ ] `max-overall-download-limit` - runtime global download speed limit.
+- [ ] `max-overall-upload-limit` - runtime global upload speed limit.
+- [ ] `out` - new-download output filename.
+- [ ] `max-download-limit` - new-download per-task download speed limit.
+- [ ] `max-upload-limit` - new-download per-task upload speed limit.
+- [ ] completion/failure notification preference - modeled in Cottid config;
+  native OS delivery requires separate dependency approval.
 
 ### Should migrate
 
 - [ ] `confirmTaskRemoval` - protects destructive task actions.
-- [ ] `max-concurrent-downloads` - common queue control.
-- [ ] `max-overall-download-limit` - global download speed limit.
-- [ ] `max-overall-upload-limit` - global upload speed limit.
-- [ ] `out` - per-download output filename.
-- [ ] `max-download-limit` - per-task download speed limit.
-- [ ] `max-upload-limit` - per-task torrent upload speed limit.
 - [ ] `continue` - resumable download behavior.
 - [ ] `follow-torrent` - expected torrent-file behavior.
 - [ ] `seed-ratio` - common torrent seeding limit.
@@ -195,8 +200,6 @@ Do not migrate unless there is a strong product reason:
 
 ### Optional
 
-- [ ] `rpcAlias` - useful with multiple profiles.
-- [ ] `extendRpcServers` - multi-daemon profile support.
 - [ ] `rpcRequestHeaders` - advanced reverse-proxy support.
 - [ ] `debugMode` - diagnostics only.
 - [ ] `keyboardShortcuts` - only after shortcuts exist.
@@ -223,13 +226,14 @@ Do not migrate unless there is a strong product reason:
 - [ ] `conditional-get` - advanced HTTP behavior.
 - [ ] `parameterized-uri` - advanced URI behavior.
 - [ ] `force-save` - advanced save behavior.
-- [ ] `save-session` - daemon session persistence.
 - [ ] `max-download-result` / `download-result` - daemon result retention.
 
 ### Skip for now
 
 - [ ] `webSocketReconnectInterval` - no WebSocket RPC in MVP.
 - [ ] `language` - requires localization system.
+- [ ] `rpcAlias` - useful with future multiple profiles.
+- [ ] `extendRpcServers` - future multi-daemon profile support.
 - [ ] `dragAndDropTasks` - queue reordering is future scope.
 - [ ] `rpcListDisplayOrder` - only matters after multiple profiles.
 - [ ] `includePrefixWhenCopyingFromTaskDetails` - copy UX detail.
@@ -246,7 +250,8 @@ Do not migrate unless there is a strong product reason:
 - [ ] `theme` - current project should not copy AriaNg theme settings.
 - [ ] `title` / `titleRefreshInterval` - browser tab behavior.
 - [ ] `browserNotification` / `browserNotificationSound` /
-  `browserNotificationFrequency` - browser API-specific.
+  `browserNotificationFrequency` - browser API-specific. Cottid may model its
+  own native completion/failure notification preference separately.
 - [ ] `swipeGesture` - mobile/browser-specific.
 - [ ] `afterCreatingNewTask` - SPA route behavior.
 - [ ] `afterRetryingTask` - SPA route behavior.
@@ -255,22 +260,26 @@ Do not migrate unless there is a strong product reason:
   daemon-owned RPC server config.
 - [ ] `daemon` / `conf-path` / console/system options - daemon startup or
   console behavior.
+- [ ] `save-session`, `save-session-interval`, and `aria2.saveSession` - daemon
+  session administration.
 - [ ] read-only DHT/listen/peer identity options - diagnostics only, not
   frontend settings.
 
-## Open Questions Before Code Implementation
+## Resolved V1 Decisions
 
-1. Should v1 support one RPC profile only, or include a full multi-profile
-   manager?
-2. Should RPC secrets be session-only by default, keyring-persisted by default,
-   or user-selectable?
-3. Should Cottid directly edit aria2 global options in v1, or only store task
-   defaults and leave daemon config alone?
-4. Should the new-task dialog expose advanced per-task options immediately, or
-   start with only directory, filename, and speed limits?
-5. Should native desktop notifications replace AriaNg browser notifications, or
-   stay out of scope for now?
-6. Should daemon session controls like `save-session` and `saveSession` action
-   be exposed, or treated as external daemon administration?
-7. Should there eventually be a raw advanced aria2 option editor, or should
-   every supported option be deliberately modeled?
+1. V1 supports one editable RPC endpoint only. Multi-profile support is future
+   work.
+2. RPC secrets follow ADR 0001: keyring-preferred persistence, explicit
+   plaintext fallback, or session-only.
+3. Cottid may edit a narrow runtime global option allowlist through
+   `aria2.getGlobalOption` and `aria2.changeGlobalOption`: `dir`,
+   `max-concurrent-downloads`, `max-overall-download-limit`, and
+   `max-overall-upload-limit`.
+4. New-download defaults start with directory, output filename, per-task
+   download limit, and per-task upload limit.
+5. Cottid should model a native completion/failure notification preference, but
+   native OS notification delivery requires a separate dependency approval.
+6. Daemon session controls such as `save-session`, `save-session-interval`, and
+   `aria2.saveSession` are external daemon administration.
+7. Cottid should not include a raw advanced aria2 option editor. Every supported
+   option must be deliberately modeled.
