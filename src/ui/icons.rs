@@ -93,6 +93,14 @@ pub fn icon<Message: 'static>(
     size: u16,
     color: fn(&Theme) -> Color,
 ) -> Element<'static, Message> {
+    icon_for(icon, size, color)
+}
+
+pub(crate) fn icon_for<'a, Message: 'a>(
+    icon: Icon,
+    size: u16,
+    color: impl Fn(&Theme) -> Color + 'a,
+) -> Element<'a, Message> {
     svg::Svg::from_path(format!("{ICON_ROOT}/{}", icon.file_name()))
         .width(Length::Fixed(f32::from(size)))
         .height(Length::Fixed(f32::from(size)))

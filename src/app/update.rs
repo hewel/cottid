@@ -1,4 +1,5 @@
 use iced::Task;
+use iced::widget::operation;
 
 use super::state::RunningAction;
 use super::{
@@ -31,6 +32,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+        Message::FocusTextInput(target) => operation::focus(target.id()),
         Message::WindowResized { width, height } => {
             state.set_viewport_size(width, height);
             Task::none()

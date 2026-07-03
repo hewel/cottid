@@ -10,6 +10,11 @@ use crate::config::ThemePreference;
 use crate::ui::overlay::PopoverId;
 use crate::ui::widgets::tree_list::TreeMessage;
 
+pub const ADD_URI_INPUT_ID: &str = "add-uri-input";
+pub const SETTINGS_ENDPOINT_INPUT_ID: &str = "settings-endpoint-input";
+pub const SETTINGS_SECRET_INPUT_ID: &str = "settings-secret-input";
+pub const SETTINGS_POLLING_INTERVAL_INPUT_ID: &str = "settings-polling-interval-input";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Add(AddMessage),
@@ -23,7 +28,31 @@ pub enum Message {
     Tree(TreeMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
+    FocusTextInput(TextInputFocusTarget),
     WindowResized { width: u32, height: u32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextInputFocusTarget {
+    AddUri,
+    SettingsEndpoint,
+    SettingsSecret,
+    SettingsPollingInterval,
+}
+
+impl TextInputFocusTarget {
+    pub fn id(self) -> iced::widget::Id {
+        iced::widget::Id::new(self.id_value())
+    }
+
+    pub fn id_value(self) -> &'static str {
+        match self {
+            Self::AddUri => ADD_URI_INPUT_ID,
+            Self::SettingsEndpoint => SETTINGS_ENDPOINT_INPUT_ID,
+            Self::SettingsSecret => SETTINGS_SECRET_INPUT_ID,
+            Self::SettingsPollingInterval => SETTINGS_POLLING_INTERVAL_INPUT_ID,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

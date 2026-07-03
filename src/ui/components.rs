@@ -1,5 +1,5 @@
 use iced::widget::{
-    button, column, container, mouse_area, opaque, row, scrollable, space, stack, text, text_input,
+    button, column, container, mouse_area, opaque, row, scrollable, space, stack, text,
 };
 use iced::{Alignment, Color, Element, Length, Theme};
 
@@ -147,17 +147,6 @@ pub(crate) fn toggle_text_button(
     toggle_button(text(label.into()), selected)
 }
 
-pub(crate) fn form_input<'a>(
-    placeholder: &str,
-    value: &str,
-    on_input: impl Fn(String) -> Message + 'a,
-) -> text_input::TextInput<'a, Message> {
-    text_input(placeholder, value)
-        .on_input(on_input)
-        .padding(10)
-        .style(theme::form_text_input)
-}
-
 pub(crate) fn badge(label: impl Into<String>, variant: BadgeVariant) -> Element<'static, Message> {
     container(text(label.into()).size(crate::ui::tokens::TOKENS.typography.caption))
         .padding([crate::ui::tokens::S1 / 2.0, crate::ui::tokens::S2])
@@ -239,15 +228,6 @@ fn transfer_speed_color(tone: TransferSpeedTone) -> fn(&Theme) -> Color {
         TransferSpeedTone::Default => theme::muted_color,
         TransferSpeedTone::Tooltip => overlay_style::tooltip_foreground,
     }
-}
-
-pub(crate) fn feedback_or_info(
-    feedback: Option<&FormFeedback>,
-    fallback: &'static str,
-) -> Element<'static, Message> {
-    feedback
-        .map(form_feedback_banner)
-        .unwrap_or_else(|| feedback_banner(FeedbackTone::Info, fallback))
 }
 
 pub(crate) fn form_feedback_banner(feedback: &FormFeedback) -> Element<'static, Message> {

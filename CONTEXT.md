@@ -36,3 +36,13 @@ and selection remain ordinary application state.
 
 TreeList data built from a selected download's normalized file paths. It is
 display-only UI state; aria2 remains the source of truth for file entries.
+
+## Field
+
+Labeled form unit that groups a label, optional description, input control, and
+field-specific validation or status message.
+
+## Field status
+
+Inline message attached to a single Field. It describes validation or
+field-specific state and is distinct from modal-level workflow feedback.

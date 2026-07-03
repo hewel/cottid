@@ -1,10 +1,10 @@
 use iced::theme::Palette;
-use iced::widget::{button, container, progress_bar, text, text_input};
+use iced::widget::{button, container, progress_bar, text};
 use iced::{Background, Border, Color, Theme};
 
 use crate::ui::tokens::{Mode, TOKENS, mode_from_theme};
 use crate::ui::variants::{
-    ButtonVariant, FeedbackVariant, InputVariant, ProgressVariant, SurfaceVariant, TextVariant,
+    ButtonVariant, FeedbackVariant, ProgressVariant, SurfaceVariant, TextVariant,
 };
 use crate::ui::widgets;
 
@@ -63,16 +63,6 @@ pub(crate) fn button_variant(
     variant: ButtonVariant,
 ) -> button::Style {
     widgets::button::style(theme, variant, status)
-}
-
-pub(crate) fn input_variant(
-    theme: &Theme,
-    status: text_input::Status,
-    variant: InputVariant,
-) -> text_input::Style {
-    match variant {
-        InputVariant::Form => widgets::input::style(theme, status),
-    }
 }
 
 pub(crate) fn progress_variant(theme: &Theme, variant: ProgressVariant) -> progress_bar::Style {
@@ -146,10 +136,6 @@ pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
 
 pub fn progress(theme: &Theme) -> progress_bar::Style {
     progress_variant(theme, ProgressVariant::Accent)
-}
-
-pub fn form_text_input(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    input_variant(theme, status, InputVariant::Form)
 }
 
 pub fn feedback_info_color(theme: &Theme) -> Color {

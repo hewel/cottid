@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::app::{
     ActionMessage, AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message,
-    SettingsMessage, State, ToolbarMessage,
+    SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
 };
 use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
@@ -14,6 +14,9 @@ use crate::ui::overlay::{
 };
 use crate::ui::theme;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
+use crate::ui::widgets::field::{
+    FieldOptions, FieldStatus, FieldStatusKind, FieldStatusVariant, Requiredness, text_field,
+};
 
 const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
 
@@ -259,9 +262,18 @@ fn filter_icon(filter: crate::app::DownloadFilter) -> Icon {
 }
 
 fn add_modal(state: &State) -> Element<'_, Message> {
-    let input = ui::form_input(
+    let input = text_field(
+        FieldOptions {
+            description: Some("HTTP, HTTPS, or magnet link."),
+            requiredness: Requiredness::Required,
+            is_disabled: state.is_add_pending(),
+            label_action: Some(Message::FocusTextInput(TextInputFocusTarget::AddUri)),
+            status: state.add_input_validation_message().map(field_error),
+            ..FieldOptions::new("Download URI")
+        },
         "https://example.com/file.iso or magnet:?",
         state.add_input(),
+        Some(TextInputFocusTarget::AddUri.id_value()),
         |value| Message::Add(AddMessage::InputChanged(value)),
     );
 
@@ -286,43 +298,83 @@ fn add_modal(state: &State) -> Element<'_, Message> {
         )
     };
 
-    let add_feedback = ui::feedback_or_info(state.add_feedback(), "Enter one URI or magnet link.");
+    let mut content = column![text("Add Download").size(20), input,].spacing(10);
 
-    ui::modal_surface(
-        column![
-            text("Add Download").size(20),
-            input,
-            add_feedback,
-            row![
-                submit,
-                ui::text_button("Cancel", ButtonVariant::Secondary)
-                    .on_press(Message::Add(AddMessage::Cancel)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
+    if let Some(feedback) = state.add_feedback() {
+        content = content.push(ui::form_feedback_banner(feedback));
+    }
+
+    content = content.push(
+        row![
+            submit,
+            ui::text_button("Cancel", ButtonVariant::Secondary)
+                .on_press(Message::Add(AddMessage::Cancel)),
         ]
-        .spacing(10),
-    )
-    .padding(18)
-    .width(Length::Fill)
-    .into()
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+
+    ui::modal_surface(content)
+        .padding(18)
+        .width(Length::Fill)
+        .into()
 }
 
 fn settings_modal(state: &State) -> Element<'_, Message> {
-    let endpoint = ui::form_input(
+    let is_testing = matches!(state.connection_status(), ConnectionStatus::Testing);
+    let endpoint = text_field(
+        FieldOptions {
+            description: Some("aria2 JSON-RPC endpoint."),
+            requiredness: Requiredness::Required,
+            is_disabled: is_testing,
+            label_tooltip: Some(
+                "Use the endpoint exposed by an already-running aria2c RPC server.",
+            ),
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsEndpoint,
+            )),
+            status: state.draft_endpoint_validation_message().map(field_error),
+            ..FieldOptions::new("RPC endpoint")
+        },
         "http://localhost:6800/jsonrpc",
         state.draft_endpoint(),
+        Some(TextInputFocusTarget::SettingsEndpoint.id_value()),
         |value| Message::Settings(SettingsMessage::EndpointChanged(value)),
     );
 
     let polling_value = state.draft_polling_interval_seconds().to_string();
-    let polling = ui::form_input("2", &polling_value, |value| {
-        Message::Settings(SettingsMessage::PollingIntervalChanged(value))
-    });
+    let polling = text_field(
+        FieldOptions {
+            description: Some("Seconds between scheduled refreshes."),
+            requiredness: Requiredness::Required,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsPollingInterval,
+            )),
+            ..FieldOptions::new("Polling interval")
+        },
+        "2",
+        &polling_value,
+        Some(TextInputFocusTarget::SettingsPollingInterval.id_value()),
+        |value| Message::Settings(SettingsMessage::PollingIntervalChanged(value)),
+    );
 
-    let secret = ui::form_input("Session token", state.draft_secret(), |value| {
-        Message::Settings(SettingsMessage::SecretChanged(value))
-    });
+    let secret = text_field(
+        FieldOptions {
+            description: Some("aria2 token secret for this endpoint."),
+            requiredness: Requiredness::Required,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsSecret,
+            )),
+            status: state.draft_secret_validation_message().map(field_error),
+            ..FieldOptions::new("Secret")
+        },
+        "Session token",
+        state.draft_secret(),
+        Some(TextInputFocusTarget::SettingsSecret.id_value()),
+        |value| Message::Settings(SettingsMessage::SecretChanged(value)),
+    );
 
     let auth_row = row![
         auth_button(
@@ -340,7 +392,6 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
 
     let mut fields = column![
         text("Connection Settings").size(20),
-        text("RPC endpoint").size(12).style(theme::muted_text),
         endpoint,
         text("Authentication").size(12).style(theme::muted_text),
         auth_row,
@@ -350,18 +401,14 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
     .spacing(8);
 
     if matches!(state.draft_auth(), RpcAuthDraft::SessionSecret) {
-        fields = fields
-            .push(text("Secret").size(12).style(theme::muted_text))
-            .push(secret);
+        fields = fields.push(secret);
     }
 
-    let settings_feedback =
-        ui::feedback_or_info(state.settings_feedback(), "Settings are not persisted yet.");
+    if let Some(feedback) = state.settings_feedback() {
+        fields = fields.push(ui::form_feedback_banner(feedback));
+    }
 
-    fields = fields
-        .push(text("Polling interval").size(12).style(theme::muted_text))
-        .push(polling)
-        .push(settings_feedback);
+    fields = fields.push(polling);
 
     let mut actions = row![
         ui::text_button("Test Connection", ButtonVariant::Secondary)
@@ -420,6 +467,14 @@ fn theme_button(
     ui::toggle_text_button(label, preference == selected).on_press(Message::Settings(
         SettingsMessage::ThemePreferenceChanged(preference),
     ))
+}
+
+fn field_error(message: &'static str) -> FieldStatus<'static> {
+    FieldStatus {
+        kind: FieldStatusKind::Error,
+        message,
+        variant: FieldStatusVariant::Attached,
+    }
 }
 
 fn connection_label(status: ConnectionStatus) -> &'static str {

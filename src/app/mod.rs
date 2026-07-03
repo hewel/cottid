@@ -11,7 +11,7 @@ use crate::ui::tokens::Mode;
 
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
-    RefreshInvalidation, SelectionMessage, SettingsMessage, ToolbarMessage,
+    RefreshInvalidation, SelectionMessage, SettingsMessage, TextInputFocusTarget, ToolbarMessage,
 };
 pub use state::{
     ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, FeedbackTone, FileIcon,
@@ -79,8 +79,27 @@ mod tests {
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
         DownloadFilter, DownloadsMessage, FeedbackTone, FileIcon, Message, RefreshInvalidation,
-        RefreshState, SelectionMessage, SettingsMessage, State, ToolbarMessage,
+        RefreshState, SelectionMessage, SettingsMessage, State, TextInputFocusTarget,
+        ToolbarMessage,
     };
+
+    #[test]
+    fn text_input_focus_targets_use_stable_widget_ids() {
+        assert_eq!(
+            [
+                TextInputFocusTarget::AddUri.id_value(),
+                TextInputFocusTarget::SettingsEndpoint.id_value(),
+                TextInputFocusTarget::SettingsSecret.id_value(),
+                TextInputFocusTarget::SettingsPollingInterval.id_value(),
+            ],
+            [
+                "add-uri-input",
+                "settings-endpoint-input",
+                "settings-secret-input",
+                "settings-polling-interval-input",
+            ]
+        );
+    }
 
     #[test]
     fn starts_offline_and_settings_ready() {
@@ -572,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_endpoint_feedback_stays_in_settings_state() {
+    fn invalid_endpoint_validation_is_exposed_as_field_status() {
         let mut state = State::initial();
 
         let _task = super::update(
@@ -584,13 +603,10 @@ mod tests {
         let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
 
         assert_eq!(
-            state.settings_feedback().map(|feedback| feedback.message()),
+            state.draft_endpoint_validation_message(),
             Some("Endpoint must start with http:// or https://.")
         );
-        assert_eq!(
-            state.settings_feedback().map(|feedback| feedback.tone()),
-            Some(FeedbackTone::Error)
-        );
+        assert_eq!(state.settings_feedback(), None);
         assert!(state.is_settings_open());
         assert_eq!(state.applied_endpoint(), "http://localhost:6800/jsonrpc");
     }
@@ -611,6 +627,22 @@ mod tests {
 
         assert_eq!(state.applied_auth_label(), "Token secret");
         assert!(!state.status_text().contains("super-secret"));
+    }
+
+    #[test]
+    fn token_secret_validation_is_exposed_as_field_status() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::AuthChanged(RpcAuthDraft::SessionSecret)),
+        );
+
+        assert_eq!(
+            state.draft_secret_validation_message(),
+            Some("Secret is required for token authentication.")
+        );
+        assert_eq!(state.settings_feedback(), None);
     }
 
     #[test]
@@ -726,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn add_submit_validates_one_uri_or_magnet_before_rpc() {
+    fn add_submit_exposes_uri_validation_as_field_status_before_rpc() {
         let mut state = State::initial();
         connect(&mut state);
 
@@ -740,13 +772,10 @@ mod tests {
         let _task = super::update(&mut state, Message::Add(AddMessage::Submit));
 
         assert_eq!(
-            state.add_feedback().map(|feedback| feedback.message()),
+            state.add_input_validation_message(),
             Some("Enter an http, https, or magnet link.")
         );
-        assert_eq!(
-            state.add_feedback().map(|feedback| feedback.tone()),
-            Some(FeedbackTone::Error)
-        );
+        assert_eq!(state.add_feedback(), None);
         assert!(!state.is_add_pending());
 
         let _task = super::update(
@@ -757,6 +786,7 @@ mod tests {
         );
 
         assert!(state.is_add_ready());
+        assert_eq!(state.add_input_validation_message(), None);
     }
 
     #[test]

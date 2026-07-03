@@ -446,6 +446,10 @@ impl State {
         self.add.feedback.as_ref()
     }
 
+    pub fn add_input_validation_message(&self) -> Option<&'static str> {
+        validate_add_input(&self.add.input).err()
+    }
+
     pub fn is_add_ready(&self) -> bool {
         validate_add_input(&self.add.input).is_ok() && self.is_connected() && !self.add.pending
     }
@@ -474,12 +478,26 @@ impl State {
         self.settings.draft.endpoint()
     }
 
+    pub fn draft_endpoint_validation_message(&self) -> Option<&'static str> {
+        self.settings.draft.endpoint_validation_message()
+    }
+
     pub fn draft_auth(&self) -> RpcAuthDraft {
         self.settings.draft.auth()
     }
 
     pub fn draft_secret(&self) -> &str {
         self.settings.draft.secret()
+    }
+
+    pub fn draft_secret_validation_message(&self) -> Option<&'static str> {
+        if matches!(self.settings.draft.auth(), RpcAuthDraft::SessionSecret)
+            && self.settings.draft.secret().is_empty()
+        {
+            Some("Secret is required for token authentication.")
+        } else {
+            None
+        }
     }
 
     pub fn draft_polling_interval_seconds(&self) -> u16 {
@@ -667,9 +685,8 @@ impl State {
         let settings = if self.settings.open {
             match self.settings.draft.apply() {
                 Ok(settings) => settings,
-                Err(error) => {
+                Err(_error) => {
                     self.connection.status = ConnectionStatus::Failed;
-                    self.settings.feedback = Some(FormFeedback::error(error.message()));
                     return None;
                 }
             }
@@ -1002,11 +1019,7 @@ impl State {
         }
 
         self.settings.open = true;
-        self.settings.feedback = self
-            .settings
-            .draft
-            .endpoint_validation_message()
-            .map(FormFeedback::error);
+        self.settings.feedback = None;
     }
 
     pub(super) fn open_add_dialog(&mut self) {
@@ -1058,8 +1071,7 @@ impl State {
     pub(super) fn begin_add_uri(&mut self) -> Option<(u64, Settings, String)> {
         let uri = match validate_add_input(&self.add.input) {
             Ok(uri) => uri,
-            Err(message) => {
-                self.add.feedback = Some(FormFeedback::error(message));
+            Err(_message) => {
                 return None;
             }
         };
@@ -1124,11 +1136,7 @@ impl State {
 
     pub(super) fn set_draft_endpoint(&mut self, endpoint: String) {
         self.settings.draft.set_endpoint(endpoint);
-        self.settings.feedback = self
-            .settings
-            .draft
-            .endpoint_validation_message()
-            .map(FormFeedback::error);
+        self.settings.feedback = None;
     }
 
     pub(super) fn set_draft_auth(&mut self, auth: RpcAuthDraft) {
@@ -1159,8 +1167,7 @@ impl State {
                 let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
                 self.commit_settings(settings, previous_endpoint, true, "Settings saved.");
             }
-            Err(error) => {
-                self.settings.feedback = Some(FormFeedback::error(error.message()));
+            Err(_error) => {
                 self.settings.open = true;
             }
         }

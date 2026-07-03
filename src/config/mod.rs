@@ -728,6 +728,7 @@ pub enum SettingsDraftError {
 }
 
 impl SettingsDraftError {
+    #[allow(dead_code)]
     pub fn message(self) -> &'static str {
         match self {
             Self::Endpoint(error) => error.message(),

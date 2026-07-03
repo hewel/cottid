@@ -49,11 +49,6 @@ pub(crate) enum FeedbackVariant {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InputVariant {
-    Form,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProgressVariant {
     Accent,
 }
