@@ -1,26 +1,53 @@
 use iced::keyboard::{Key, Modifiers, key};
 use iced::{Event, Subscription, event};
 
+use futures_util::SinkExt;
+use std::pin::Pin;
 use std::time::Duration;
 
 use super::{
     AddMessage, DownloadsMessage, Message, SelectionMessage, SettingsMessage, ToolbarMessage,
+    WebSocketMessage,
 };
 
 pub fn subscription(state: &super::State) -> Subscription<Message> {
     let keyboard = event::listen_with(app_event);
 
     if state.is_connected() {
-        return Subscription::batch([
+        let mut subscriptions = vec![
             keyboard,
             iced::time::every(Duration::from_secs(
                 u64::from(state.polling_interval_seconds()).max(1),
             ))
             .map(|_| Message::Downloads(DownloadsMessage::RefreshTick)),
-        ]);
+        ];
+
+        if let Some(endpoint) = state.websocket_subscription_endpoint() {
+            subscriptions.push(Subscription::run_with(endpoint, websocket_notifications));
+        }
+
+        return Subscription::batch(subscriptions);
     }
 
     keyboard
+}
+
+fn websocket_notifications(
+    endpoint: &String,
+) -> Pin<Box<dyn iced::futures::Stream<Item = Message> + Send>> {
+    let endpoint = endpoint.clone();
+    Box::pin(iced::stream::channel(100, async move |output| {
+        crate::aria2::websocket::listen_notifications(endpoint, |event| {
+            let mut output = output.clone();
+            async move {
+                output
+                    .send(Message::WebSocket(WebSocketMessage::Event(event)))
+                    .await
+                    .is_ok()
+            }
+        })
+        .await;
+    }))
 }
 
 fn app_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {

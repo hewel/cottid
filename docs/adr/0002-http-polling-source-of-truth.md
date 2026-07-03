@@ -4,6 +4,11 @@ Cottid keeps HTTP JSON-RPC polling as the canonical command and refresh path.
 Future WebSocket support is an optional notification channel first, not a
 replacement RPC transport.
 
+Superseded for download refreshes and download actions by
+[ADR-0009](0009-websocket-primary-refresh-and-actions.md): WebSocket is now the
+preferred transport for those operations when enabled, while HTTP remains the
+fallback and settings transport.
+
 AriaNg and Motrix both demonstrate useful aria2 WebSocket patterns: classify
 incoming messages by `id` and `method`, dispatch aria2 notifications by method
 name, and clear pending request state on reconnect when WebSocket is used for

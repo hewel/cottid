@@ -621,6 +621,14 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
 
     fields = fields
         .push(polling)
+        .push(
+            checkbox(state.draft_websocket_enabled())
+                .label("Use WebSocket for live updates and download actions")
+                .on_toggle(|enabled| {
+                    Message::Settings(SettingsMessage::WebSocketEnabledChanged(enabled))
+                })
+                .size(16),
+        )
         .push(new_download_directory)
         .push(new_download_output)
         .push(new_download_download_limit)

@@ -11,9 +11,10 @@ use crate::aria2::methods::build_get_global_stat_request;
 use crate::aria2::methods::{
     JsonRpcRequest, RequestId, build_add_uri_request, build_change_global_option_request,
     build_get_global_option_request, build_get_global_stat_call, build_get_version_request,
-    build_multicall_request, build_pause_request, build_purge_stopped_request,
-    build_remove_request, build_tell_active_call, build_tell_status_call, build_tell_stopped_call,
-    build_tell_waiting_call, build_unpause_request,
+    build_list_notifications_request, build_multicall_request, build_pause_request,
+    build_purge_stopped_request, build_remove_request, build_tell_active_call,
+    build_tell_status_call, build_tell_stopped_call, build_tell_waiting_call,
+    build_unpause_request,
 };
 #[cfg(test)]
 use crate::aria2::raw_types::parse_global_stats_response;
@@ -35,6 +36,7 @@ const PURGE_STOPPED_REQUEST_ID: RequestId = RequestId::new(10);
 const SNAPSHOT_MULTICALL_REQUEST_ID: RequestId = RequestId::new(11);
 const GET_GLOBAL_OPTION_REQUEST_ID: RequestId = RequestId::new(12);
 const CHANGE_GLOBAL_OPTION_REQUEST_ID: RequestId = RequestId::new(13);
+const LIST_NOTIFICATIONS_REQUEST_ID: RequestId = RequestId::new(14);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -197,9 +199,8 @@ impl Aria2Client {
         &self,
         request: BatchRefreshRequest,
     ) -> Result<DownloadSnapshot, ClientError> {
-        let transport = ReqwestTransport::new();
         let (rpc_request, entry_kinds) = self.build_snapshot_multicall(&request);
-        let body = send_rpc_request_async(&self.settings, &transport, rpc_request).await?;
+        let body = send_rpc_request_preferred(&self.settings, rpc_request).await?;
 
         parse_snapshot_multicall(&body, &entry_kinds)
     }
@@ -284,6 +285,18 @@ pub async fn test_connection(settings: Settings) -> Result<ConnectionTest, Clien
     Aria2Client::new(settings).test_connection().await
 }
 
+pub async fn test_websocket_notifications(settings: Settings) -> Result<(), ClientError> {
+    if !settings.websocket_enabled() {
+        return Ok(());
+    }
+
+    let request =
+        build_list_notifications_request(LIST_NOTIFICATIONS_REQUEST_ID, secret(&settings));
+    crate::aria2::websocket::send_rpc_request(&settings, request)
+        .await
+        .map(|_| ())
+}
+
 #[expect(dead_code, reason = "kept as the default app-facing snapshot wrapper")]
 pub async fn fetch_download_snapshot(settings: Settings) -> Result<DownloadSnapshot, ClientError> {
     fetch_download_snapshot_with_request(settings, BatchRefreshRequest::default()).await
@@ -331,46 +344,41 @@ pub async fn add_uri(
     uri: String,
     options: AddUriOptions,
 ) -> Result<Gid, ClientError> {
-    let transport = ReqwestTransport::new();
     let request = build_add_uri_request(
         ADD_URI_REQUEST_ID,
         secret(&settings),
         &uri,
         options.into_rpc_options(),
     );
-    let body = send_rpc_request_async(&settings, &transport, request).await?;
+    let body = send_rpc_request_preferred(&settings, request).await?;
 
     parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
 }
 
 pub async fn pause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
-    let transport = ReqwestTransport::new();
     let request = build_pause_request(PAUSE_REQUEST_ID, secret(&settings), &gid);
-    let body = send_rpc_request_async(&settings, &transport, request).await?;
+    let body = send_rpc_request_preferred(&settings, request).await?;
 
     parse_gid_command_response(&body, PAUSE_REQUEST_ID)
 }
 
 pub async fn unpause(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
-    let transport = ReqwestTransport::new();
     let request = build_unpause_request(UNPAUSE_REQUEST_ID, secret(&settings), &gid);
-    let body = send_rpc_request_async(&settings, &transport, request).await?;
+    let body = send_rpc_request_preferred(&settings, request).await?;
 
     parse_gid_command_response(&body, UNPAUSE_REQUEST_ID)
 }
 
 pub async fn remove(settings: Settings, gid: Gid) -> Result<Gid, ClientError> {
-    let transport = ReqwestTransport::new();
     let request = build_remove_request(REMOVE_REQUEST_ID, secret(&settings), &gid);
-    let body = send_rpc_request_async(&settings, &transport, request).await?;
+    let body = send_rpc_request_preferred(&settings, request).await?;
 
     parse_gid_command_response(&body, REMOVE_REQUEST_ID)
 }
 
 pub async fn purge_stopped(settings: Settings) -> Result<(), ClientError> {
-    let transport = ReqwestTransport::new();
     let request = build_purge_stopped_request(PURGE_STOPPED_REQUEST_ID, secret(&settings));
-    let body = send_rpc_request_async(&settings, &transport, request).await?;
+    let body = send_rpc_request_preferred(&settings, request).await?;
 
     parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
 }
@@ -574,6 +582,20 @@ async fn send_rpc_request_async(
     }
 
     Ok(response.body)
+}
+
+async fn send_rpc_request_preferred(
+    settings: &Settings,
+    request: JsonRpcRequest,
+) -> Result<String, ClientError> {
+    if settings.websocket_enabled()
+        && let Ok(body) = crate::aria2::websocket::send_rpc_request(settings, request.clone()).await
+    {
+        return Ok(body);
+    }
+
+    let transport = ReqwestTransport::new();
+    send_rpc_request_async(settings, &transport, request).await
 }
 
 fn secret(settings: &Settings) -> Option<&crate::config::Secret> {

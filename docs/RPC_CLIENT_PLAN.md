@@ -343,23 +343,25 @@ Rules:
 Do not return raw DTOs, raw maps, or untyped JSON from app-facing client
 methods.
 
-## Future WebSocket Notification Strategy
+## WebSocket Refresh And Notification Strategy
 
-WebSocket support belongs in `aria2::websocket` and requires explicit dependency
-approval.
+WebSocket support belongs in `aria2::websocket`.
 
-Future behavior:
+Current behavior:
 
-- Keep HTTP JSON-RPC polling as the source of truth.
+- Prefer WebSocket for download refresh snapshots and download actions when the
+  setting is enabled.
+- Fall back to HTTP JSON-RPC when WebSocket send, response, timeout, or
+  connection handling fails.
+- Keep HTTP JSON-RPC for connection tests and runtime global option settings.
 - Parse aria2 notification frames into typed invalidation events.
 - Key events by `Gid`.
 - Coalesce notification bursts before requesting a dirty refresh.
 - Feed invalidations into the same central refresh scheduler used by polling.
 - Never directly mutate canonical download state from WebSocket events.
 - Keep UI unaware of whether data came from polling or WebSocket.
-- If RPC-over-WebSocket is added later, use request id correlation, connection
-  generation ids, pending request cleanup on reconnect, and stale response
-  discard.
+- Progress values still come from RPC snapshot methods; aria2 notification
+  frames do not contain progress snapshots.
 
 ## Dependency Approval Required
 

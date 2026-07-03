@@ -60,3 +60,27 @@ Cottid-side value applied when creating a new aria2 download. It is not a live
 change to existing downloads unless a separate download action explicitly does
 that.
 _Avoid_: task preset, raw task option
+
+## WebSocket notification
+
+aria2 event frame received over the JSON-RPC WebSocket endpoint. It indicates
+that a download changed and is converted into a dirty refresh request; it does
+not contain progress snapshot data.
+
+## WebSocket RPC transport
+
+Cottid's preferred transport for download refresh snapshots and download
+actions when enabled and connected. It sends the same aria2 JSON-RPC requests as
+the HTTP transport.
+
+## HTTP fallback
+
+Recovery path used when WebSocket RPC send, response, timeout, or connection
+handling fails. The same operation is retried over HTTP JSON-RPC so WebSocket is
+not a single point of failure.
+
+## Dirty refresh
+
+Scheduler refresh requested because an external event indicates cached download
+sections may be stale. Dirty refreshes coalesce through the central scheduler
+and rebuild canonical download state from aria2 RPC snapshots.

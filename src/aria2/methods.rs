@@ -123,6 +123,15 @@ pub fn build_get_version_request(id: RequestId, secret: Option<&Secret>) -> Json
     }
 }
 
+pub fn build_list_notifications_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "system.listNotifications",
+        params: token_params(secret),
+    }
+}
+
 pub fn build_get_global_stat_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -357,11 +366,11 @@ mod tests {
     use crate::aria2::methods::{
         JsonRpcParam, RequestId, build_add_uri_request, build_change_global_option_request,
         build_get_global_option_request, build_get_global_stat_call, build_get_global_stat_request,
-        build_get_version_request, build_multicall_request, build_pause_request,
-        build_purge_stopped_request, build_remove_request, build_tell_active_call,
-        build_tell_active_request, build_tell_status_call, build_tell_status_request,
-        build_tell_stopped_call, build_tell_stopped_request, build_tell_waiting_call,
-        build_tell_waiting_request, build_unpause_request,
+        build_get_version_request, build_list_notifications_request, build_multicall_request,
+        build_pause_request, build_purge_stopped_request, build_remove_request,
+        build_tell_active_call, build_tell_active_request, build_tell_status_call,
+        build_tell_status_request, build_tell_stopped_call, build_tell_stopped_request,
+        build_tell_waiting_call, build_tell_waiting_request, build_unpause_request,
     };
     use crate::config::Secret;
 
@@ -384,6 +393,18 @@ mod tests {
             &[JsonRpcParam::String("token:secret-value".to_owned())]
         );
         assert!(!format!("{request:?}").contains("secret-value"));
+    }
+
+    #[test]
+    fn builds_list_notifications_request_with_secret() {
+        let secret = Secret::session("secret-value");
+        let request = build_list_notifications_request(RequestId::new(9), Some(&secret));
+
+        assert_eq!(request.method(), "system.listNotifications");
+        assert_eq!(
+            request.params(),
+            &[JsonRpcParam::String("token:secret-value".to_owned())]
+        );
     }
 
     #[test]

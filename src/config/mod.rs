@@ -17,6 +17,7 @@ pub struct Settings {
     endpoint: String,
     auth: RpcAuth,
     polling_interval_seconds: u16,
+    websocket_enabled: bool,
 }
 
 impl Default for Settings {
@@ -25,6 +26,7 @@ impl Default for Settings {
             endpoint: DEFAULT_ENDPOINT.to_owned(),
             auth: RpcAuth::NoSecret,
             polling_interval_seconds: DEFAULT_POLLING_INTERVAL_SECONDS,
+            websocket_enabled: true,
         }
     }
 }
@@ -34,13 +36,14 @@ impl Settings {
         endpoint: impl Into<String>,
         polling_interval_seconds: u16,
     ) -> Result<Self, EndpointValidationError> {
-        Self::new(endpoint, RpcAuth::NoSecret, polling_interval_seconds)
+        Self::new(endpoint, RpcAuth::NoSecret, polling_interval_seconds, true)
     }
 
     fn new(
         endpoint: impl Into<String>,
         auth: RpcAuth,
         polling_interval_seconds: u16,
+        websocket_enabled: bool,
     ) -> Result<Self, EndpointValidationError> {
         let endpoint = endpoint.into();
         Self::validate_endpoint(&endpoint)?;
@@ -49,6 +52,7 @@ impl Settings {
             endpoint: endpoint.trim().to_owned(),
             auth,
             polling_interval_seconds: polling_interval_seconds.max(1),
+            websocket_enabled,
         })
     }
 
@@ -62,6 +66,10 @@ impl Settings {
 
     pub fn polling_interval_seconds(&self) -> u16 {
         self.polling_interval_seconds
+    }
+
+    pub fn websocket_enabled(&self) -> bool {
+        self.websocket_enabled
     }
 
     pub fn validate_endpoint(endpoint: &str) -> Result<(), EndpointValidationError> {
@@ -552,6 +560,7 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
     let polling_interval_seconds = connection
         .polling_interval_seconds
         .unwrap_or(DEFAULT_POLLING_INTERVAL_SECONDS);
+    let websocket_enabled = connection.websocket_enabled.unwrap_or(true);
     let auth = config.auth.unwrap_or_default();
     let auth_storage = auth.storage.unwrap_or(TomlAuthStorage::None).into();
 
@@ -574,7 +583,13 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
         },
     };
 
-    let settings = Settings::new(endpoint, rpc_auth, polling_interval_seconds).map_err(|_| ())?;
+    let settings = Settings::new(
+        endpoint,
+        rpc_auth,
+        polling_interval_seconds,
+        websocket_enabled,
+    )
+    .map_err(|_| ())?;
     let selected_filter = config
         .ui
         .as_ref()
@@ -638,6 +653,7 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
 fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
     let mut endpoint = None;
     let mut polling_interval_seconds = None;
+    let mut websocket_enabled = None;
     let mut selected_filter = None;
     let mut theme_preference = None;
     let mut confirm_destructive_actions = None;
@@ -661,6 +677,9 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
             "endpoint" => endpoint = Some(value.to_owned()),
             "polling_interval_seconds" => {
                 polling_interval_seconds = Some(value.parse::<u16>().map_err(|_| ())?);
+            }
+            "websocket_enabled" => {
+                websocket_enabled = parse_bool(value);
             }
             "selected_filter" => selected_filter = Some(value.to_owned()),
             "theme" => theme_preference = ThemePreference::from_config_value(value),
@@ -690,6 +709,8 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
         polling_interval_seconds.unwrap_or(DEFAULT_POLLING_INTERVAL_SECONDS),
     )
     .map_err(|_| ())?;
+    let mut settings = settings;
+    settings.websocket_enabled = websocket_enabled.unwrap_or(true);
 
     Ok(ConfigLoad {
         config: PersistedConfig::with_auth_storage(
@@ -725,6 +746,7 @@ fn serialize_config(config: &PersistedConfig) -> Result<String, toml::ser::Error
         connection: Some(TomlConnection {
             endpoint: Some(config.settings().endpoint().to_owned()),
             polling_interval_seconds: Some(config.settings().polling_interval_seconds()),
+            websocket_enabled: Some(config.settings().websocket_enabled()),
         }),
         auth: Some(TomlAuth {
             storage: Some(config.auth_storage().into()),
@@ -800,6 +822,7 @@ pub struct SettingsDraft {
     endpoint: String,
     secret: String,
     polling_interval_seconds: u16,
+    websocket_enabled: bool,
 }
 
 impl SettingsDraft {
@@ -813,6 +836,7 @@ impl SettingsDraft {
             endpoint: settings.endpoint().to_owned(),
             secret,
             polling_interval_seconds: settings.polling_interval_seconds(),
+            websocket_enabled: settings.websocket_enabled(),
         }
     }
 
@@ -840,6 +864,14 @@ impl SettingsDraft {
         self.polling_interval_seconds = seconds.max(1);
     }
 
+    pub fn websocket_enabled(&self) -> bool {
+        self.websocket_enabled
+    }
+
+    pub fn set_websocket_enabled(&mut self, enabled: bool) {
+        self.websocket_enabled = enabled;
+    }
+
     pub fn apply(&self) -> Result<Settings, SettingsDraftError> {
         Settings::validate_endpoint(&self.endpoint).map_err(SettingsDraftError::Endpoint)?;
 
@@ -853,6 +885,7 @@ impl SettingsDraft {
             endpoint: self.endpoint.trim().to_owned(),
             auth,
             polling_interval_seconds: self.polling_interval_seconds,
+            websocket_enabled: self.websocket_enabled,
         })
     }
 
@@ -873,6 +906,7 @@ impl fmt::Debug for SettingsDraft {
             .field("endpoint", &self.endpoint)
             .field("secret", &"<redacted>")
             .field("polling_interval_seconds", &self.polling_interval_seconds)
+            .field("websocket_enabled", &self.websocket_enabled)
             .finish()
     }
 }
@@ -959,6 +993,7 @@ struct TomlConfig {
 struct TomlConnection {
     endpoint: Option<String>,
     polling_interval_seconds: Option<u16>,
+    websocket_enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -1067,6 +1102,7 @@ mod tests {
         assert_eq!(settings.endpoint(), "http://localhost:6800/jsonrpc");
         assert_eq!(settings.auth(), &RpcAuth::NoSecret);
         assert_eq!(settings.polling_interval_seconds(), 2);
+        assert!(settings.websocket_enabled());
     }
 
     #[test]
@@ -1094,6 +1130,7 @@ mod tests {
         draft.set_endpoint("http://aria2.local:6800/jsonrpc");
         draft.set_secret("super-secret");
         draft.set_polling_interval_seconds(5);
+        draft.set_websocket_enabled(false);
 
         assert_eq!(applied.endpoint(), "http://localhost:6800/jsonrpc");
 
@@ -1107,11 +1144,13 @@ mod tests {
             &RpcAuth::SessionSecret(Secret::session("super-secret"))
         );
         assert_eq!(applied_from_draft.polling_interval_seconds(), 5);
+        assert!(!applied_from_draft.websocket_enabled());
 
         draft.cancel_to(&applied);
         assert_eq!(draft.endpoint(), "http://localhost:6800/jsonrpc");
         assert_eq!(draft.secret(), "");
         assert_eq!(draft.polling_interval_seconds(), 2);
+        assert!(draft.websocket_enabled());
     }
 
     #[test]
@@ -1145,14 +1184,17 @@ mod tests {
         let config = PersistedConfig::with_auth_storage(settings, "paused", AuthStorage::None);
 
         save_config_with_token_store(&path, &config, None, &token_store).expect("config saves");
+        let contents = fs::read_to_string(&path).expect("config file");
         let loaded = load_config_with_token_store(&path, &token_store);
 
+        assert!(contents.contains("websocket_enabled = true"));
         assert_eq!(loaded.feedback(), None);
         assert_eq!(
             loaded.config().settings().endpoint(),
             "http://aria2.local:6800/jsonrpc"
         );
         assert_eq!(loaded.config().settings().polling_interval_seconds(), 5);
+        assert!(loaded.config().settings().websocket_enabled());
         assert_eq!(loaded.config().settings().auth(), &RpcAuth::NoSecret);
         assert_eq!(loaded.config().selected_filter(), "paused");
         assert_eq!(loaded.config().theme_preference(), ThemePreference::System);
@@ -1185,6 +1227,7 @@ mod tests {
             "http://aria2.local:6800/jsonrpc",
             RpcAuth::SessionSecret(Secret::session("super-secret")),
             3,
+            true,
         )
         .expect("settings");
         let config = PersistedConfig::with_auth_storage_and_theme(
@@ -1217,6 +1260,7 @@ mod tests {
             "http://aria2.local:6800/jsonrpc"
         );
         assert_eq!(loaded.config().settings().polling_interval_seconds(), 7);
+        assert!(loaded.config().settings().websocket_enabled());
         assert_eq!(loaded.config().selected_filter(), "error");
         assert_eq!(loaded.config().theme_preference(), ThemePreference::System);
     }
@@ -1243,6 +1287,7 @@ mod tests {
             "http://aria2.local:6800/jsonrpc",
             RpcAuth::SessionSecret(Secret::session("super-secret")),
             3,
+            true,
         )
         .expect("settings");
         let config = PersistedConfig::with_auth_storage(settings, "all", AuthStorage::Keyring);
@@ -1266,6 +1311,7 @@ mod tests {
             "http://aria2.local:6800/jsonrpc",
             RpcAuth::SessionSecret(Secret::session("super-secret")),
             3,
+            true,
         )
         .expect("settings");
         let config =
@@ -1290,6 +1336,7 @@ mod tests {
             "http://aria2.local:6800/jsonrpc",
             RpcAuth::SessionSecret(Secret::session("super-secret")),
             3,
+            true,
         )
         .expect("settings");
         let config = PersistedConfig::with_auth_storage(settings, "all", AuthStorage::SessionOnly);
@@ -1310,6 +1357,7 @@ mod tests {
             "http://aria2.local:6800/jsonrpc",
             RpcAuth::SessionSecret(Secret::session("super-secret")),
             3,
+            true,
         )
         .expect("settings");
         let config = PersistedConfig::with_auth_storage(settings, "all", AuthStorage::Keyring);
@@ -1355,6 +1403,7 @@ mod tests {
             "http://new.local:6800/jsonrpc",
             RpcAuth::SessionSecret(Secret::session("new")),
             3,
+            true,
         )
         .expect("settings");
         let config = PersistedConfig::with_auth_storage(settings, "all", AuthStorage::Keyring);

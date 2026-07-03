@@ -32,6 +32,15 @@ pub enum ConnectionStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebSocketStatus {
+    Disabled,
+    Connecting,
+    Connected,
+    Degraded,
+    Reconnecting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadFilter {
     All,
     Active,
@@ -334,6 +343,7 @@ pub enum FileIcon {
 pub struct State {
     add: AddState,
     connection: ConnectionState,
+    websocket_status: WebSocketStatus,
     settings: SettingsState,
     stats: StatsState,
     downloads: DownloadsState,
@@ -393,6 +403,7 @@ impl State {
                 version: None,
                 settings: None,
             },
+            websocket_status: WebSocketStatus::Disabled,
             settings: SettingsState {
                 applied: applied_settings,
                 draft,
@@ -551,6 +562,10 @@ impl State {
 
     pub fn draft_polling_interval_seconds(&self) -> u16 {
         self.settings.draft.polling_interval_seconds()
+    }
+
+    pub fn draft_websocket_enabled(&self) -> bool {
+        self.settings.draft.websocket_enabled()
     }
 
     pub fn theme_preference(&self) -> ThemePreference {
@@ -794,6 +809,19 @@ impl State {
         self.settings.applied.polling_interval_seconds()
     }
 
+    pub(super) fn websocket_subscription_settings(&self) -> Option<Settings> {
+        if self.is_connected() && self.settings.applied.websocket_enabled() {
+            self.connection.settings.clone()
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn websocket_subscription_endpoint(&self) -> Option<String> {
+        self.websocket_subscription_settings()
+            .map(|settings| settings.endpoint().to_owned())
+    }
+
     #[cfg(test)]
     pub fn global_stats(&self) -> Option<GlobalStats> {
         self.stats.global
@@ -810,8 +838,9 @@ impl State {
 
     pub fn status_text(&self) -> String {
         format!(
-            "{} | {}",
+            "{} | {} | {}",
             connection_label(self.connection.status),
+            websocket_status_label(self.websocket_status),
             self.settings.applied.auth().display_label()
         )
     }
@@ -836,6 +865,11 @@ impl State {
 
         self.connection.generation += 1;
         self.connection.status = ConnectionStatus::Testing;
+        self.websocket_status = if settings.websocket_enabled() {
+            WebSocketStatus::Connecting
+        } else {
+            WebSocketStatus::Disabled
+        };
         self.connection.version = None;
         self.connection.settings = None;
         self.clear_snapshot();
@@ -857,6 +891,11 @@ impl State {
         match result {
             Ok(result) => {
                 self.connection.status = ConnectionStatus::Connected;
+                self.websocket_status = if settings.websocket_enabled() {
+                    WebSocketStatus::Connecting
+                } else {
+                    WebSocketStatus::Disabled
+                };
                 self.connection.version = Some(result.version().version().to_owned());
                 self.connection.settings = Some(settings.clone());
                 if self.settings.open {
@@ -875,6 +914,7 @@ impl State {
             }
             Err(error) => {
                 self.connection.status = ConnectionStatus::Failed;
+                self.websocket_status = WebSocketStatus::Disabled;
                 self.connection.version = None;
                 self.connection.settings = None;
                 self.clear_snapshot();
@@ -1594,6 +1634,34 @@ impl State {
         }
     }
 
+    pub(super) fn set_draft_websocket_enabled(&mut self, enabled: bool) {
+        self.settings.draft.set_websocket_enabled(enabled);
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn apply_websocket_event(
+        &mut self,
+        event: crate::aria2::websocket::WebSocketEvent,
+    ) -> Option<RefreshInvalidation> {
+        match event {
+            crate::aria2::websocket::WebSocketEvent::Connected => {
+                self.websocket_status = WebSocketStatus::Connected;
+                None
+            }
+            crate::aria2::websocket::WebSocketEvent::Degraded => {
+                self.websocket_status = WebSocketStatus::Degraded;
+                None
+            }
+            crate::aria2::websocket::WebSocketEvent::Reconnecting => {
+                self.websocket_status = WebSocketStatus::Reconnecting;
+                None
+            }
+            crate::aria2::websocket::WebSocketEvent::Notification(notification) => {
+                Some(RefreshInvalidation::Aria2Notification(notification))
+            }
+        }
+    }
+
     pub(super) fn save_settings(&mut self) -> Option<(u64, Settings, RuntimeGlobalOptions)> {
         match self.settings.draft.apply() {
             Ok(settings) => {
@@ -1690,6 +1758,11 @@ impl State {
 
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.websocket_status = if self.settings.applied.websocket_enabled() {
+            WebSocketStatus::Connecting
+        } else {
+            WebSocketStatus::Disabled
+        };
         self.settings.theme_preference = pending.theme_preference;
         self.settings.pending_plaintext_fallback = None;
         self.settings.auth_storage = AuthStorage::PlaintextFallback;
@@ -1709,6 +1782,11 @@ impl State {
 
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.websocket_status = if self.settings.applied.websocket_enabled() {
+            WebSocketStatus::Connecting
+        } else {
+            WebSocketStatus::Disabled
+        };
         self.settings.theme_preference = pending.theme_preference;
         self.settings.pending_plaintext_fallback = None;
         self.settings.auth_storage = AuthStorage::SessionOnly;
@@ -1735,6 +1813,11 @@ impl State {
         let previous_theme_preference = self.settings.theme_preference;
         self.settings.applied = settings;
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.websocket_status = if self.settings.applied.websocket_enabled() {
+            WebSocketStatus::Connecting
+        } else {
+            WebSocketStatus::Disabled
+        };
         self.settings.auth_storage = self.next_auth_storage();
         self.settings.pending_plaintext_fallback = None;
         self.settings.feedback = None;
@@ -2528,6 +2611,16 @@ fn connection_label(status: ConnectionStatus) -> &'static str {
         ConnectionStatus::Testing => "Testing...",
         ConnectionStatus::Connected => "Connected",
         ConnectionStatus::Failed => "Connection failed",
+    }
+}
+
+fn websocket_status_label(status: WebSocketStatus) -> &'static str {
+    match status {
+        WebSocketStatus::Disabled => "HTTP",
+        WebSocketStatus::Connecting => "WebSocket connecting",
+        WebSocketStatus::Connected => "WebSocket live",
+        WebSocketStatus::Degraded => "HTTP fallback",
+        WebSocketStatus::Reconnecting => "WebSocket reconnecting",
     }
 }
 

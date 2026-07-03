@@ -4,7 +4,7 @@ use iced::widget::operation;
 use super::state::RunningAction;
 use super::{
     ActionMessage, AddMessage, ConnectionMessage, DownloadsMessage, Message, SelectionMessage,
-    SettingsMessage, State, ToolbarMessage,
+    SettingsMessage, State, ToolbarMessage, WebSocketMessage,
 };
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -32,10 +32,25 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         }
         Message::Toolbar(message) => update_toolbar(state, message),
         Message::Settings(message) => update_settings(state, message),
+        Message::WebSocket(message) => update_websocket(state, message),
         Message::FocusTextInput(target) => operation::focus(target.id()),
         Message::WindowResized { width, height } => {
             state.set_viewport_size(width, height);
             Task::none()
+        }
+    }
+}
+
+fn update_websocket(state: &mut State, message: WebSocketMessage) -> Task<Message> {
+    match message {
+        WebSocketMessage::Event(event) => {
+            let Some(invalidation) = state.apply_websocket_event(event) else {
+                return Task::none();
+            };
+            if !state.invalidate_refresh(invalidation) {
+                return Task::none();
+            }
+            start_dirty_refresh(state)
         }
     }
 }
@@ -226,6 +241,7 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
                         })
                     },
                 );
+                let websocket_settings = settings.clone();
                 let (runtime_generation, runtime_settings) =
                     state.begin_runtime_global_options_fetch(settings);
                 let runtime_task = Task::perform(
@@ -244,8 +260,24 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
                         })
                     },
                 );
+                let websocket_task = if websocket_settings.websocket_enabled() {
+                    Task::perform(
+                        async move {
+                            crate::aria2::client::test_websocket_notifications(websocket_settings)
+                                .await
+                        },
+                        |result| {
+                            Message::WebSocket(WebSocketMessage::Event(match result {
+                                Ok(()) => crate::aria2::websocket::WebSocketEvent::Connected,
+                                Err(_) => crate::aria2::websocket::WebSocketEvent::Degraded,
+                            }))
+                        },
+                    )
+                } else {
+                    Task::none()
+                };
 
-                return Task::batch([refresh_task, runtime_task]);
+                return Task::batch([refresh_task, runtime_task, websocket_task]);
             }
 
             Task::none()
@@ -380,6 +412,10 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
         }
         SettingsMessage::PollingIntervalChanged(value) => {
             state.set_draft_polling_interval(value);
+            Task::none()
+        }
+        SettingsMessage::WebSocketEnabledChanged(enabled) => {
+            state.set_draft_websocket_enabled(enabled);
             Task::none()
         }
         SettingsMessage::NewDownloadDirectoryChanged(directory) => {

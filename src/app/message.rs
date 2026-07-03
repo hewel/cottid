@@ -5,6 +5,7 @@ use crate::aria2::domain::Gid;
 use crate::aria2::domain::RuntimeGlobalOptions;
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
+use crate::aria2::websocket::WebSocketEvent;
 use crate::config::Settings;
 use crate::config::ThemePreference;
 use crate::ui::overlay::PopoverId;
@@ -37,6 +38,7 @@ pub enum Message {
     Tree(TreeMessage),
     Toolbar(ToolbarMessage),
     Settings(SettingsMessage),
+    WebSocket(WebSocketMessage),
     FocusTextInput(TextInputFocusTarget),
     WindowResized { width: u32, height: u32 },
 }
@@ -189,4 +191,10 @@ pub enum SettingsMessage {
     },
     ConfirmDestructiveActionsChanged(bool),
     NotifyDownloadOutcomesChanged(bool),
+    WebSocketEnabledChanged(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebSocketMessage {
+    Event(WebSocketEvent),
 }

@@ -12,6 +12,7 @@ use crate::ui::tokens::Mode;
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
     RefreshInvalidation, SelectionMessage, SettingsMessage, TextInputFocusTarget, ToolbarMessage,
+    WebSocketMessage,
 };
 #[cfg(test)]
 pub use state::NotificationOutcome;
@@ -74,6 +75,7 @@ mod tests {
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
+    use crate::aria2::websocket::WebSocketEvent;
     use crate::config::{Settings, ThemePreference};
     use crate::ui::overlay::PopoverId;
     use crate::ui::widgets::tree_list::TreeMessage;
@@ -83,6 +85,7 @@ mod tests {
         DownloadFilter, DownloadRowTrailing, DownloadsMessage, FeedbackTone, FileIcon, Message,
         NotificationOutcome, PendingActionConfirmation, RefreshInvalidation, RefreshState,
         SelectionMessage, SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
+        WebSocketMessage,
     };
 
     #[test]
@@ -2636,6 +2639,34 @@ mod tests {
         assert!(request.include_active());
         assert!(request.include_waiting());
         assert!(!request.include_stopped());
+    }
+
+    #[test]
+    fn websocket_connected_event_updates_compact_status_text() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        let _task = super::update(
+            &mut state,
+            Message::WebSocket(WebSocketMessage::Event(WebSocketEvent::Connected)),
+        );
+
+        assert!(state.status_text().contains("WebSocket live"));
+    }
+
+    #[test]
+    fn websocket_notification_enters_dirty_refresh_path() {
+        let mut state = State::initial();
+        connect(&mut state);
+
+        let _task = super::update(
+            &mut state,
+            Message::WebSocket(WebSocketMessage::Event(WebSocketEvent::Notification(
+                Aria2Notification::DownloadStart(Gid::new("active-gid").expect("valid gid")),
+            ))),
+        );
+
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
     }
 
     #[test]
