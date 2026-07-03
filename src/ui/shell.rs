@@ -13,12 +13,14 @@ use crate::ui::overlay::{
     app_popover, app_tooltip, app_tooltip_element,
 };
 use crate::ui::theme;
+use crate::ui::tokens::TOKENS;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
 use crate::ui::widgets::field::{
     FieldOptions, FieldStatus, FieldStatusKind, FieldStatusVariant, Requiredness, text_field,
 };
 
 const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
+const THEME_BUTTON_SIZE: f32 = 40.0;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
@@ -141,12 +143,15 @@ fn theme_switcher(state: &State, compact: bool) -> Element<'static, Message> {
         );
     }
 
-    let mut controls = row![].spacing(6).width(Length::Fill);
+    let mut controls = row![].spacing(TOKENS.spacing.s1).align_y(Alignment::Center);
     for preference in ThemePreference::ALL {
         controls = controls.push(theme_icon_button(preference, selected));
     }
 
-    controls.into()
+    container(controls)
+        .width(Length::Fill)
+        .align_x(Alignment::Start)
+        .into()
 }
 
 fn compact_theme_cycle_button(selected: ThemePreference) -> button::Button<'static, Message> {
@@ -170,13 +175,12 @@ fn theme_icon_button(
 
 fn theme_icon_control(icon_kind: Icon, selected: bool) -> button::Button<'static, Message> {
     ui::toggle_button(
-        row![icon(icon_kind, 18, theme::text_color)]
-            .align_y(Alignment::Center)
-            .width(Length::Fill),
+        container(icon(icon_kind, 20, theme::text_color)).center(Length::Fill),
         selected,
     )
-    .padding([10, 8])
-    .width(Length::Fill)
+    .padding(0)
+    .width(Length::Fixed(THEME_BUTTON_SIZE))
+    .height(Length::Fixed(THEME_BUTTON_SIZE))
 }
 
 fn theme_icon(preference: ThemePreference) -> Icon {
