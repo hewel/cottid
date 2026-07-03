@@ -1,9 +1,9 @@
-use iced::widget::{button, column, container, row, space, stack, text};
+use iced::widget::{button, checkbox, column, container, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
-    AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message, SettingsMessage,
-    State, TextInputFocusTarget, ToolbarMessage,
+    AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message,
+    PendingActionConfirmation, SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
 };
 use crate::config::ThemePreference;
 use crate::ui::components as ui;
@@ -45,7 +45,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
 
     let mut layers = vec![base.into()];
 
-    if state.is_settings_open() {
+    if state.pending_action_confirmation().is_some() {
+        layers.push(ui::modal_layer(
+            action_confirmation_modal(state),
+            state.modal_max_width(420.0),
+            state.modal_max_height(),
+        ));
+    } else if state.is_settings_open() {
         layers.push(ui::modal_layer(
             settings_modal(state),
             state.modal_max_width(640.0),
@@ -62,6 +68,43 @@ pub fn view(state: &State) -> Element<'_, Message> {
     stack(layers)
         .width(Length::Fill)
         .height(Length::Fill)
+        .into()
+}
+
+fn action_confirmation_modal(state: &State) -> Element<'_, Message> {
+    let Some(confirmation) = state.pending_action_confirmation() else {
+        return space::vertical().into();
+    };
+    let (title, body, confirm_label) = match confirmation {
+        PendingActionConfirmation::Remove(_) => (
+            "Remove Download",
+            "Remove this download from aria2?",
+            "Remove",
+        ),
+        PendingActionConfirmation::PurgeStopped => (
+            "Purge Stopped Results",
+            "Purge completed and failed results from aria2?",
+            "Purge",
+        ),
+    };
+
+    let content = column![
+        text(title).size(20),
+        text(body).size(13).style(theme::muted_text),
+        row![
+            ui::text_button(confirm_label, ButtonVariant::Destructive)
+                .on_press(Message::Action(crate::app::ActionMessage::ConfirmPending)),
+            ui::text_button("Cancel", ButtonVariant::Secondary)
+                .on_press(Message::Action(crate::app::ActionMessage::CancelPending)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(12);
+
+    ui::modal_surface(content)
+        .padding(18)
+        .width(Length::Fill)
         .into()
 }
 
@@ -277,6 +320,58 @@ fn add_modal(state: &State) -> Element<'_, Message> {
         |value| Message::Add(AddMessage::InputChanged(value)),
     );
 
+    let output_filename = text_field(
+        FieldOptions {
+            description: Some("Optional output filename for this download."),
+            requiredness: Requiredness::Optional,
+            is_disabled: state.is_add_pending(),
+            status: state
+                .add_output_filename_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Output filename")
+        },
+        "file.iso",
+        state.add_output_filename(),
+        None,
+        |value| Message::Add(AddMessage::OutputFilenameChanged(value)),
+    );
+
+    let max_download_limit = text_field(
+        FieldOptions {
+            description: Some(
+                "Optional per-task download limit in bytes per second. 0 is unlimited.",
+            ),
+            requiredness: Requiredness::Optional,
+            is_disabled: state.is_add_pending(),
+            status: state
+                .add_max_download_limit_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Download limit")
+        },
+        "0",
+        state.add_max_download_limit(),
+        None,
+        |value| Message::Add(AddMessage::MaxDownloadLimitChanged(value)),
+    );
+
+    let max_upload_limit = text_field(
+        FieldOptions {
+            description: Some(
+                "Optional per-task upload limit in bytes per second. 0 is unlimited.",
+            ),
+            requiredness: Requiredness::Optional,
+            is_disabled: state.is_add_pending(),
+            status: state
+                .add_max_upload_limit_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Upload limit")
+        },
+        "0",
+        state.add_max_upload_limit(),
+        None,
+        |value| Message::Add(AddMessage::MaxUploadLimitChanged(value)),
+    );
+
     let submit = if state.is_add_ready() {
         ui::text_button(
             if state.is_add_pending() {
@@ -298,7 +393,14 @@ fn add_modal(state: &State) -> Element<'_, Message> {
         )
     };
 
-    let mut content = column![text("Add Download").size(20), input,].spacing(10);
+    let mut content = column![
+        text("Add Download").size(20),
+        input,
+        output_filename,
+        max_download_limit,
+        max_upload_limit,
+    ]
+    .spacing(10);
 
     if let Some(feedback) = state.add_feedback() {
         content = content.push(ui::form_feedback_banner(feedback));
@@ -359,6 +461,142 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         |value| Message::Settings(SettingsMessage::PollingIntervalChanged(value)),
     );
 
+    let new_download_directory = text_field(
+        FieldOptions {
+            description: Some("Daemon-local directory used for new downloads."),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsNewDownloadDirectory,
+            )),
+            ..FieldOptions::new("New download directory")
+        },
+        "/downloads",
+        state.draft_new_download_directory(),
+        Some(TextInputFocusTarget::SettingsNewDownloadDirectory.id_value()),
+        |value| Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(value)),
+    );
+
+    let new_download_output = text_field(
+        FieldOptions {
+            description: Some("Default output filename for new downloads."),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsNewDownloadOutput,
+            )),
+            status: state
+                .draft_new_download_output_filename_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Default output filename")
+        },
+        "file.iso",
+        state.draft_new_download_output_filename(),
+        Some(TextInputFocusTarget::SettingsNewDownloadOutput.id_value()),
+        |value| Message::Settings(SettingsMessage::NewDownloadOutputFilenameChanged(value)),
+    );
+
+    let new_download_download_limit = text_field(
+        FieldOptions {
+            description: Some(
+                "Default per-task download limit in bytes per second. 0 is unlimited.",
+            ),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsNewDownloadDownloadLimit,
+            )),
+            status: state
+                .draft_new_download_max_download_limit_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Default download limit")
+        },
+        "0",
+        state.draft_new_download_max_download_limit(),
+        Some(TextInputFocusTarget::SettingsNewDownloadDownloadLimit.id_value()),
+        |value| Message::Settings(SettingsMessage::NewDownloadMaxDownloadLimitChanged(value)),
+    );
+
+    let new_download_upload_limit = text_field(
+        FieldOptions {
+            description: Some("Default per-task upload limit in bytes per second. 0 is unlimited."),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsNewDownloadUploadLimit,
+            )),
+            status: state
+                .draft_new_download_max_upload_limit_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Default upload limit")
+        },
+        "0",
+        state.draft_new_download_max_upload_limit(),
+        Some(TextInputFocusTarget::SettingsNewDownloadUploadLimit.id_value()),
+        |value| Message::Settings(SettingsMessage::NewDownloadMaxUploadLimitChanged(value)),
+    );
+
+    let runtime_max_concurrent = text_field(
+        FieldOptions {
+            description: Some("Maximum active downloads on the connected daemon."),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsRuntimeMaxConcurrent,
+            )),
+            status: state
+                .draft_runtime_max_concurrent_downloads_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Max concurrent downloads")
+        },
+        "5",
+        state.draft_runtime_max_concurrent_downloads(),
+        Some(TextInputFocusTarget::SettingsRuntimeMaxConcurrent.id_value()),
+        |value| Message::Settings(SettingsMessage::RuntimeMaxConcurrentDownloadsChanged(value)),
+    );
+
+    let runtime_download_limit = text_field(
+        FieldOptions {
+            description: Some("Global download limit in bytes per second. 0 is unlimited."),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsRuntimeDownloadLimit,
+            )),
+            status: state
+                .draft_runtime_max_overall_download_limit_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Global download limit")
+        },
+        "0",
+        state.draft_runtime_max_overall_download_limit(),
+        Some(TextInputFocusTarget::SettingsRuntimeDownloadLimit.id_value()),
+        |value| {
+            Message::Settings(SettingsMessage::RuntimeMaxOverallDownloadLimitChanged(
+                value,
+            ))
+        },
+    );
+
+    let runtime_upload_limit = text_field(
+        FieldOptions {
+            description: Some("Global upload limit in bytes per second. 0 is unlimited."),
+            requiredness: Requiredness::Optional,
+            is_disabled: is_testing,
+            label_action: Some(Message::FocusTextInput(
+                TextInputFocusTarget::SettingsRuntimeUploadLimit,
+            )),
+            status: state
+                .draft_runtime_max_overall_upload_limit_validation_message()
+                .map(field_error),
+            ..FieldOptions::new("Global upload limit")
+        },
+        "0",
+        state.draft_runtime_max_overall_upload_limit(),
+        Some(TextInputFocusTarget::SettingsRuntimeUploadLimit.id_value()),
+        |value| Message::Settings(SettingsMessage::RuntimeMaxOverallUploadLimitChanged(value)),
+    );
+
     let secret = text_field(
         FieldOptions {
             description: Some("Optional aria2 token secret for this endpoint."),
@@ -381,7 +619,31 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         fields = fields.push(ui::form_feedback_banner(feedback));
     }
 
-    fields = fields.push(polling);
+    fields = fields
+        .push(polling)
+        .push(new_download_directory)
+        .push(new_download_output)
+        .push(new_download_download_limit)
+        .push(new_download_upload_limit)
+        .push(runtime_max_concurrent)
+        .push(runtime_download_limit)
+        .push(runtime_upload_limit)
+        .push(
+            checkbox(state.confirm_destructive_actions())
+                .label("Confirm remove and purge actions")
+                .on_toggle(|enabled| {
+                    Message::Settings(SettingsMessage::ConfirmDestructiveActionsChanged(enabled))
+                })
+                .size(16),
+        )
+        .push(
+            checkbox(state.notify_download_outcomes())
+                .label("Track completed and failed download notification intents")
+                .on_toggle(|enabled| {
+                    Message::Settings(SettingsMessage::NotifyDownloadOutcomesChanged(enabled))
+                })
+                .size(16),
+        );
 
     let mut actions = row![
         ui::text_button("Test Connection", ButtonVariant::Secondary)

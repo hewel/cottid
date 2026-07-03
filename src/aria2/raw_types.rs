@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::aria2::domain::{
-    DownloadDetail, DownloadFile, DownloadItem, DownloadStatus, Gid, GlobalStats, TorrentDetail,
-    VersionInfo,
+    DownloadDetail, DownloadFile, DownloadItem, DownloadStatus, Gid, GlobalStats,
+    RuntimeGlobalOptions, TorrentDetail, VersionInfo,
 };
 use crate::aria2::errors::ClientError;
 use crate::aria2::methods::RequestId;
@@ -203,6 +203,24 @@ pub fn parse_ok_response(body: &str, expected_id: RequestId) -> Result<(), Clien
             "command result must be OK".to_owned(),
         ))
     }
+}
+
+pub fn parse_runtime_global_options_response(
+    body: &str,
+    expected_id: RequestId,
+) -> Result<RuntimeGlobalOptions, ClientError> {
+    let envelope: JsonRpcEnvelope<std::collections::BTreeMap<String, String>> =
+        parse_envelope(body, expected_id)?;
+    let result = envelope.result.ok_or_else(|| {
+        ClientError::MalformedResponse("missing global options result".to_owned())
+    })?;
+
+    Ok(RuntimeGlobalOptions::with_values(
+        result.get("dir").cloned(),
+        result.get("max-concurrent-downloads").cloned(),
+        result.get("max-overall-download-limit").cloned(),
+        result.get("max-overall-upload-limit").cloned(),
+    ))
 }
 
 fn parse_envelope<T>(body: &str, expected_id: RequestId) -> Result<JsonRpcEnvelope<T>, ClientError>
@@ -439,6 +457,7 @@ mod tests {
         MulticallEntry, MulticallEntryKind, parse_add_uri_response, parse_download_detail_response,
         parse_download_items_response, parse_get_version_response, parse_gid_command_response,
         parse_global_stats_response, parse_multicall_response, parse_ok_response,
+        parse_runtime_global_options_response,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::methods::RequestId;
@@ -645,6 +664,21 @@ mod tests {
             RequestId::new(44),
         )
         .expect("valid OK response");
+    }
+
+    #[test]
+    fn parses_modeled_runtime_global_options_only() {
+        let options = parse_runtime_global_options_response(
+            r#"{"jsonrpc":"2.0","id":12,"result":{"dir":"/downloads","max-concurrent-downloads":"6","max-overall-download-limit":"4096","max-overall-upload-limit":"512","save-session":"/tmp/session"}}"#,
+            RequestId::new(12),
+        )
+        .expect("valid global options");
+
+        assert_eq!(options.directory(), Some("/downloads"));
+        assert_eq!(options.max_concurrent_downloads(), Some("6"));
+        assert_eq!(options.max_overall_download_limit(), Some("4096"));
+        assert_eq!(options.max_overall_upload_limit(), Some("512"));
+        assert!(!options.into_rpc_options().contains_key("save-session"));
     }
 
     #[test]

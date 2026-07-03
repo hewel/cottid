@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,7 @@ pub enum JsonRpcParam {
     String(String),
     Number(u64),
     StringList(Vec<String>),
+    StringMap(BTreeMap<String, String>),
     MethodCalls(Vec<MulticallMethod>),
 }
 
@@ -191,9 +193,42 @@ pub fn build_tell_status_request(
     }
 }
 
-pub fn build_add_uri_request(id: RequestId, secret: Option<&Secret>, uri: &str) -> JsonRpcRequest {
+pub fn build_get_global_option_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.getGlobalOption",
+        params: token_params(secret),
+    }
+}
+
+pub fn build_change_global_option_request(
+    id: RequestId,
+    secret: Option<&Secret>,
+    options: BTreeMap<String, String>,
+) -> JsonRpcRequest {
+    let mut params = token_params(secret);
+    params.push(JsonRpcParam::StringMap(options));
+
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.changeGlobalOption",
+        params,
+    }
+}
+
+pub fn build_add_uri_request(
+    id: RequestId,
+    secret: Option<&Secret>,
+    uri: &str,
+    options: BTreeMap<String, String>,
+) -> JsonRpcRequest {
     let mut params = token_params(secret);
     params.push(JsonRpcParam::StringList(vec![uri.to_owned()]));
+    if !options.is_empty() {
+        params.push(JsonRpcParam::StringMap(options));
+    }
 
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -316,15 +351,17 @@ fn download_detail_keys_param() -> JsonRpcParam {
 mod tests {
     use super::{download_detail_keys_param, download_item_keys_param};
     use serde_json::Value;
+    use std::collections::BTreeMap;
 
     use crate::aria2::domain::Gid;
     use crate::aria2::methods::{
-        JsonRpcParam, RequestId, build_add_uri_request, build_get_global_stat_call,
-        build_get_global_stat_request, build_get_version_request, build_multicall_request,
-        build_pause_request, build_purge_stopped_request, build_remove_request,
-        build_tell_active_call, build_tell_active_request, build_tell_status_call,
-        build_tell_status_request, build_tell_stopped_call, build_tell_stopped_request,
-        build_tell_waiting_call, build_tell_waiting_request, build_unpause_request,
+        JsonRpcParam, RequestId, build_add_uri_request, build_change_global_option_request,
+        build_get_global_option_request, build_get_global_stat_call, build_get_global_stat_request,
+        build_get_version_request, build_multicall_request, build_pause_request,
+        build_purge_stopped_request, build_remove_request, build_tell_active_call,
+        build_tell_active_request, build_tell_status_call, build_tell_status_request,
+        build_tell_stopped_call, build_tell_stopped_request, build_tell_waiting_call,
+        build_tell_waiting_request, build_unpause_request,
     };
     use crate::config::Secret;
 
@@ -441,22 +478,77 @@ mod tests {
 
     #[test]
     fn builds_add_uri_request_with_uri_array() {
-        let request = build_add_uri_request(RequestId::new(31), None, "https://example.test/file");
+        let request = build_add_uri_request(
+            RequestId::new(31),
+            None,
+            "https://example.test/file",
+            BTreeMap::new(),
+        );
         let body: Value = serde_json::to_value(&request).expect("request serializes");
 
         assert_eq!(request.method(), "aria2.addUri");
         assert_eq!(body["params"][0][0], "https://example.test/file");
+        assert!(body["params"].as_array().expect("params").len() == 1);
     }
 
     #[test]
     fn builds_add_uri_request_with_secret_before_uri_array() {
         let secret = Secret::session("secret-value");
-        let request = build_add_uri_request(RequestId::new(31), Some(&secret), "magnet:?xt=abc");
+        let request = build_add_uri_request(
+            RequestId::new(31),
+            Some(&secret),
+            "magnet:?xt=abc",
+            BTreeMap::new(),
+        );
         let body: Value = serde_json::to_value(&request).expect("request serializes");
 
         assert_eq!(body["params"][0], "token:secret-value");
         assert_eq!(body["params"][1][0], "magnet:?xt=abc");
         assert!(!format!("{request:?}").contains("secret-value"));
+    }
+
+    #[test]
+    fn builds_add_uri_request_with_modeled_options() {
+        let mut options = BTreeMap::new();
+        options.insert("dir".to_owned(), "/downloads".to_owned());
+        options.insert("out".to_owned(), "file.iso".to_owned());
+        options.insert("max-download-limit".to_owned(), "1024".to_owned());
+        options.insert("max-upload-limit".to_owned(), "2048".to_owned());
+        let request = build_add_uri_request(
+            RequestId::new(32),
+            None,
+            "https://example.test/file",
+            options,
+        );
+        let body: Value = serde_json::to_value(&request).expect("request serializes");
+
+        assert_eq!(body["method"], "aria2.addUri");
+        assert_eq!(body["params"][0][0], "https://example.test/file");
+        assert_eq!(body["params"][1]["dir"], "/downloads");
+        assert_eq!(body["params"][1]["out"], "file.iso");
+        assert_eq!(body["params"][1]["max-download-limit"], "1024");
+        assert_eq!(body["params"][1]["max-upload-limit"], "2048");
+    }
+
+    #[test]
+    fn builds_modeled_global_option_requests() {
+        let request = build_get_global_option_request(RequestId::new(33), None);
+        assert_eq!(request.method(), "aria2.getGlobalOption");
+        assert!(request.params().is_empty());
+
+        let mut options = BTreeMap::new();
+        options.insert("dir".to_owned(), "/downloads".to_owned());
+        options.insert("max-concurrent-downloads".to_owned(), "6".to_owned());
+        options.insert("max-overall-download-limit".to_owned(), "4096".to_owned());
+        options.insert("max-overall-upload-limit".to_owned(), "512".to_owned());
+        let request = build_change_global_option_request(RequestId::new(34), None, options);
+        let body: Value = serde_json::to_value(&request).expect("request serializes");
+
+        assert_eq!(request.method(), "aria2.changeGlobalOption");
+        assert_eq!(body["params"][0]["dir"], "/downloads");
+        assert_eq!(body["params"][0]["max-concurrent-downloads"], "6");
+        assert_eq!(body["params"][0]["max-overall-download-limit"], "4096");
+        assert_eq!(body["params"][0]["max-overall-upload-limit"], "512");
     }
 
     #[test]

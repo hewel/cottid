@@ -170,25 +170,25 @@ Do not migrate unless there is a strong product reason:
 
 ### Must migrate
 
-- [ ] `rpcHost` / `rpcPort` / `rpcInterface` / `protocol` - core connection
+- [x] `rpcHost` / `rpcPort` / `rpcInterface` / `protocol` - core connection
   setup, represented as a single endpoint URL.
-- [ ] `secret` - needed for secured aria2 daemons, with secure/session storage.
-- [ ] `globalStatRefreshInterval` - global stats refresh cadence.
-- [ ] `downloadTaskRefreshInterval` - task list refresh cadence.
-- [ ] `dir` - daemon-side download directory, as both runtime global option and
+- [x] `secret` - needed for secured aria2 daemons, with secure/session storage.
+- [x] `globalStatRefreshInterval` - global stats refresh cadence.
+- [x] `downloadTaskRefreshInterval` - task list refresh cadence.
+- [x] `dir` - daemon-side download directory, as both runtime global option and
   new-download default.
-- [ ] `max-concurrent-downloads` - runtime global queue control.
-- [ ] `max-overall-download-limit` - runtime global download speed limit.
-- [ ] `max-overall-upload-limit` - runtime global upload speed limit.
-- [ ] `out` - new-download output filename.
-- [ ] `max-download-limit` - new-download per-task download speed limit.
-- [ ] `max-upload-limit` - new-download per-task upload speed limit.
-- [ ] completion/failure notification preference - modeled in Cottid config;
+- [x] `max-concurrent-downloads` - runtime global queue control.
+- [x] `max-overall-download-limit` - runtime global download speed limit.
+- [x] `max-overall-upload-limit` - runtime global upload speed limit.
+- [x] `out` - new-download output filename.
+- [x] `max-download-limit` - new-download per-task download speed limit.
+- [x] `max-upload-limit` - new-download per-task upload speed limit.
+- [x] completion/failure notification preference - modeled in Cottid config;
   native OS delivery requires separate dependency approval.
 
 ### Should migrate
 
-- [ ] `confirmTaskRemoval` - protects destructive task actions.
+- [x] `confirmTaskRemoval` - protects destructive task actions.
 - [ ] `continue` - resumable download behavior.
 - [ ] `follow-torrent` - expected torrent-file behavior.
 - [ ] `seed-ratio` - common torrent seeding limit.
@@ -283,3 +283,21 @@ Do not migrate unless there is a strong product reason:
    `aria2.saveSession` are external daemon administration.
 7. Cottid should not include a raw advanced aria2 option editor. Every supported
    option must be deliberately modeled.
+
+## Implemented V1 Surface
+
+Cottid now exposes the v1 settings surface as modeled fields only:
+
+- local connection settings: one endpoint, secret storage, and polling interval.
+- Cottid preferences: destructive-action confirmation and completion/failure
+  notification intents without native OS notification delivery.
+- new-download defaults: `dir`, `out`, `max-download-limit`, and
+  `max-upload-limit`; empty defaults are omitted from `aria2.addUri`.
+- runtime global options: `dir`, `max-concurrent-downloads`,
+  `max-overall-download-limit`, and `max-overall-upload-limit` through
+  `aria2.getGlobalOption` and `aria2.changeGlobalOption`.
+
+Unsupported v1 surfaces remain deliberately absent: raw advanced option editing,
+daemon session controls such as `save-session` / `save-session-interval` /
+`aria2.saveSession`, multi-profile behavior, browser notification settings,
+WebSocket transport settings, and daemon lifecycle management.

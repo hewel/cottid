@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::app::scheduler::{RefreshDirtyFlags, RefreshScheduler, RefreshTrigger};
 use crate::app::{ActionMessage, ActionTarget, RefreshInvalidation};
 use crate::aria2::client::{BatchRefreshRequest, ConnectionTest};
+use crate::aria2::domain::{AddUriOptions, RuntimeGlobalOptions};
 use crate::aria2::domain::{
     DownloadDetail, DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid, GlobalStats,
 };
@@ -336,6 +337,7 @@ pub struct State {
     downloads: DownloadsState,
     scheduler: RefreshScheduler,
     actions: ActionsState,
+    notification_intents: Vec<NotificationIntent>,
     selection: SelectionState,
     popovers: PopoverState,
     viewport_width: u32,
@@ -376,6 +378,9 @@ impl State {
             add: AddState {
                 open: false,
                 input: String::new(),
+                output_filename: String::new(),
+                max_download_limit: String::new(),
+                max_upload_limit: String::new(),
                 generation: 0,
                 pending: false,
                 feedback: None,
@@ -390,6 +395,31 @@ impl State {
                 applied: applied_settings,
                 draft,
                 theme_preference: config.theme_preference(),
+                confirm_destructive_actions: config.confirm_destructive_actions(),
+                notify_download_outcomes: config.notify_download_outcomes(),
+                new_download_directory: config.new_download_directory().to_owned(),
+                draft_new_download_directory: config.new_download_directory().to_owned(),
+                new_download_output_filename: config.new_download_output_filename().to_owned(),
+                draft_new_download_output_filename: config
+                    .new_download_output_filename()
+                    .to_owned(),
+                new_download_max_download_limit: config
+                    .new_download_max_download_limit()
+                    .to_owned(),
+                draft_new_download_max_download_limit: config
+                    .new_download_max_download_limit()
+                    .to_owned(),
+                new_download_max_upload_limit: config.new_download_max_upload_limit().to_owned(),
+                draft_new_download_max_upload_limit: config
+                    .new_download_max_upload_limit()
+                    .to_owned(),
+                runtime_max_concurrent_downloads: String::new(),
+                draft_runtime_max_concurrent_downloads: String::new(),
+                runtime_max_overall_download_limit: String::new(),
+                draft_runtime_max_overall_download_limit: String::new(),
+                runtime_max_overall_upload_limit: String::new(),
+                draft_runtime_max_overall_upload_limit: String::new(),
+                runtime_options_generation: 0,
                 open: false,
                 feedback,
                 config_path,
@@ -412,8 +442,10 @@ impl State {
             actions: ActionsState {
                 generation: 0,
                 pending: None,
+                pending_confirmation: None,
                 feedback: None,
             },
+            notification_intents: Vec::new(),
             selection: SelectionState {
                 selected_gid: None,
                 file_tree_gid: None,
@@ -441,6 +473,18 @@ impl State {
         &self.add.input
     }
 
+    pub fn add_output_filename(&self) -> &str {
+        &self.add.output_filename
+    }
+
+    pub fn add_max_download_limit(&self) -> &str {
+        &self.add.max_download_limit
+    }
+
+    pub fn add_max_upload_limit(&self) -> &str {
+        &self.add.max_upload_limit
+    }
+
     pub fn add_feedback(&self) -> Option<&FormFeedback> {
         self.add.feedback.as_ref()
     }
@@ -449,8 +493,25 @@ impl State {
         validate_add_input(&self.add.input).err()
     }
 
+    pub fn add_output_filename_validation_message(&self) -> Option<&'static str> {
+        validate_output_filename(&self.add.output_filename).err()
+    }
+
+    pub fn add_max_download_limit_validation_message(&self) -> Option<&'static str> {
+        validate_speed_limit(&self.add.max_download_limit).err()
+    }
+
+    pub fn add_max_upload_limit_validation_message(&self) -> Option<&'static str> {
+        validate_speed_limit(&self.add.max_upload_limit).err()
+    }
+
     pub fn is_add_ready(&self) -> bool {
-        validate_add_input(&self.add.input).is_ok() && self.is_connected() && !self.add.pending
+        validate_add_input(&self.add.input).is_ok()
+            && validate_output_filename(&self.add.output_filename).is_ok()
+            && validate_speed_limit(&self.add.max_download_limit).is_ok()
+            && validate_speed_limit(&self.add.max_upload_limit).is_ok()
+            && self.is_connected()
+            && !self.add.pending
     }
 
     pub fn is_settings_ready(&self) -> bool {
@@ -491,6 +552,72 @@ impl State {
 
     pub fn theme_preference(&self) -> ThemePreference {
         self.settings.theme_preference
+    }
+
+    pub fn confirm_destructive_actions(&self) -> bool {
+        self.settings.confirm_destructive_actions
+    }
+
+    pub fn notify_download_outcomes(&self) -> bool {
+        self.settings.notify_download_outcomes
+    }
+
+    pub fn draft_new_download_directory(&self) -> &str {
+        &self.settings.draft_new_download_directory
+    }
+
+    pub fn draft_new_download_output_filename(&self) -> &str {
+        &self.settings.draft_new_download_output_filename
+    }
+
+    pub fn draft_new_download_max_download_limit(&self) -> &str {
+        &self.settings.draft_new_download_max_download_limit
+    }
+
+    pub fn draft_new_download_max_upload_limit(&self) -> &str {
+        &self.settings.draft_new_download_max_upload_limit
+    }
+
+    pub fn draft_runtime_max_concurrent_downloads(&self) -> &str {
+        &self.settings.draft_runtime_max_concurrent_downloads
+    }
+
+    pub fn draft_runtime_max_overall_download_limit(&self) -> &str {
+        &self.settings.draft_runtime_max_overall_download_limit
+    }
+
+    pub fn draft_runtime_max_overall_upload_limit(&self) -> &str {
+        &self.settings.draft_runtime_max_overall_upload_limit
+    }
+
+    pub fn draft_new_download_output_filename_validation_message(&self) -> Option<&'static str> {
+        validate_output_filename(&self.settings.draft_new_download_output_filename).err()
+    }
+
+    pub fn draft_new_download_max_download_limit_validation_message(&self) -> Option<&'static str> {
+        validate_speed_limit(&self.settings.draft_new_download_max_download_limit).err()
+    }
+
+    pub fn draft_new_download_max_upload_limit_validation_message(&self) -> Option<&'static str> {
+        validate_speed_limit(&self.settings.draft_new_download_max_upload_limit).err()
+    }
+
+    pub fn draft_runtime_max_concurrent_downloads_validation_message(
+        &self,
+    ) -> Option<&'static str> {
+        validate_positive_integer(&self.settings.draft_runtime_max_concurrent_downloads).err()
+    }
+
+    pub fn draft_runtime_max_overall_download_limit_validation_message(
+        &self,
+    ) -> Option<&'static str> {
+        validate_speed_limit(&self.settings.draft_runtime_max_overall_download_limit).err()
+    }
+
+    pub fn draft_runtime_max_overall_upload_limit_validation_message(
+        &self,
+    ) -> Option<&'static str> {
+        validate_speed_limit(&self.settings.draft_runtime_max_overall_upload_limit).err()
     }
 
     pub fn settings_feedback(&self) -> Option<&FormFeedback> {
@@ -541,6 +668,21 @@ impl State {
             .feedback
             .as_deref()
             .or(self.actions.feedback.as_deref())
+    }
+
+    pub fn pending_action_confirmation(&self) -> Option<PendingActionConfirmation> {
+        self.actions
+            .pending_confirmation
+            .as_ref()
+            .map(|action| match action {
+                RunningAction::Remove(gid) => PendingActionConfirmation::Remove(gid.clone()),
+                RunningAction::PurgeStopped => PendingActionConfirmation::PurgeStopped,
+                RunningAction::Pause(_) | RunningAction::Unpause(_) => unreachable!(),
+            })
+    }
+
+    pub fn notification_intents(&self) -> &[NotificationIntent] {
+        &self.notification_intents
     }
 
     pub fn selected_filter(&self) -> DownloadFilter {
@@ -874,6 +1016,130 @@ impl State {
         self.persist_ui_preferences();
     }
 
+    pub(super) fn set_confirm_destructive_actions(&mut self, enabled: bool) {
+        self.settings.confirm_destructive_actions = enabled;
+        if !enabled {
+            self.actions.pending_confirmation = None;
+        }
+        self.persist_ui_preferences();
+    }
+
+    pub(super) fn set_notify_download_outcomes(&mut self, enabled: bool) {
+        self.settings.notify_download_outcomes = enabled;
+        if !enabled {
+            self.notification_intents.clear();
+        }
+        self.persist_ui_preferences();
+    }
+
+    pub(super) fn set_draft_new_download_directory(&mut self, directory: String) {
+        self.settings.draft_new_download_directory = directory;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_new_download_output_filename(&mut self, output_filename: String) {
+        self.settings.draft_new_download_output_filename = output_filename;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_new_download_max_download_limit(&mut self, limit: String) {
+        self.settings.draft_new_download_max_download_limit = limit;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_new_download_max_upload_limit(&mut self, limit: String) {
+        self.settings.draft_new_download_max_upload_limit = limit;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_runtime_max_concurrent_downloads(&mut self, value: String) {
+        self.settings.draft_runtime_max_concurrent_downloads = value;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_runtime_max_overall_download_limit(&mut self, value: String) {
+        self.settings.draft_runtime_max_overall_download_limit = value;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_runtime_max_overall_upload_limit(&mut self, value: String) {
+        self.settings.draft_runtime_max_overall_upload_limit = value;
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn begin_runtime_global_options_fetch(
+        &mut self,
+        settings: Settings,
+    ) -> (u64, Settings) {
+        self.settings.runtime_options_generation += 1;
+        (self.settings.runtime_options_generation, settings)
+    }
+
+    pub(super) fn apply_runtime_global_options(
+        &mut self,
+        generation: u64,
+        settings: Settings,
+        result: Result<RuntimeGlobalOptions, ClientError>,
+    ) {
+        if generation != self.settings.runtime_options_generation
+            || self.connection.settings.as_ref() != Some(&settings)
+        {
+            return;
+        }
+
+        match result {
+            Ok(options) => {
+                let directory = options.directory().unwrap_or_default().to_owned();
+                self.settings.new_download_directory = directory.clone();
+                self.settings.draft_new_download_directory = directory;
+                self.settings.runtime_max_concurrent_downloads = options
+                    .max_concurrent_downloads()
+                    .unwrap_or_default()
+                    .to_owned();
+                self.settings.draft_runtime_max_concurrent_downloads =
+                    self.settings.runtime_max_concurrent_downloads.clone();
+                self.settings.runtime_max_overall_download_limit = options
+                    .max_overall_download_limit()
+                    .unwrap_or_default()
+                    .to_owned();
+                self.settings.draft_runtime_max_overall_download_limit =
+                    self.settings.runtime_max_overall_download_limit.clone();
+                self.settings.runtime_max_overall_upload_limit = options
+                    .max_overall_upload_limit()
+                    .unwrap_or_default()
+                    .to_owned();
+                self.settings.draft_runtime_max_overall_upload_limit =
+                    self.settings.runtime_max_overall_upload_limit.clone();
+            }
+            Err(error) => {
+                self.settings.feedback = Some(FormFeedback::warning(error.display_message()));
+            }
+        }
+    }
+
+    pub(super) fn finish_runtime_global_options_save(
+        &mut self,
+        generation: u64,
+        settings: Settings,
+        result: Result<(), ClientError>,
+    ) {
+        if generation != self.settings.runtime_options_generation
+            || self.connection.settings.as_ref() != Some(&settings)
+        {
+            return;
+        }
+
+        match result {
+            Ok(()) => {
+                self.settings.feedback = Some(FormFeedback::success("Settings saved."));
+            }
+            Err(error) => {
+                self.settings.feedback = Some(FormFeedback::error(error.display_message()));
+                self.settings.open = true;
+            }
+        }
+    }
+
     pub(super) fn cycle_theme_preference(&mut self) {
         self.set_theme_preference(self.settings.theme_preference.next());
     }
@@ -928,8 +1194,43 @@ impl State {
             return None;
         }
 
-        let settings = self.connection.settings.clone()?;
-        let action = match message {
+        self.actions.pending_confirmation = None;
+        let action = self.running_action_for_message(message)?;
+        self.start_running_action(action)
+    }
+
+    pub(super) fn request_action_confirmation(&mut self, message: ActionMessage) -> bool {
+        if self.actions.pending.is_some() || !self.settings.confirm_destructive_actions {
+            return false;
+        }
+
+        let Some(action) = self.running_action_for_message(message) else {
+            return false;
+        };
+        if !action.requires_confirmation() {
+            return false;
+        }
+
+        self.actions.pending_confirmation = Some(action);
+        self.actions.feedback = None;
+        true
+    }
+
+    pub(super) fn confirm_pending_action(&mut self) -> Option<(u64, Settings, RunningAction)> {
+        if self.actions.pending.is_some() {
+            return None;
+        }
+
+        let action = self.actions.pending_confirmation.take()?;
+        self.start_running_action(action)
+    }
+
+    pub(super) fn cancel_pending_action(&mut self) {
+        self.actions.pending_confirmation = None;
+    }
+
+    fn running_action_for_message(&self, message: ActionMessage) -> Option<RunningAction> {
+        match message {
             ActionMessage::Pause(gid) => {
                 if !self.can_pause(&gid) {
                     return None;
@@ -954,8 +1255,18 @@ impl State {
                 }
                 RunningAction::PurgeStopped
             }
-            ActionMessage::Finished { .. } => return None,
-        };
+            ActionMessage::ConfirmPending
+            | ActionMessage::CancelPending
+            | ActionMessage::Finished { .. } => return None,
+        }
+        .into()
+    }
+
+    fn start_running_action(
+        &mut self,
+        action: RunningAction,
+    ) -> Option<(u64, Settings, RunningAction)> {
+        let settings = self.connection.settings.clone()?;
 
         self.actions.generation += 1;
         self.actions.feedback = None;
@@ -1020,6 +1331,9 @@ impl State {
         }
 
         self.add.open = true;
+        self.add.output_filename = self.settings.new_download_output_filename.clone();
+        self.add.max_download_limit = self.settings.new_download_max_download_limit.clone();
+        self.add.max_upload_limit = self.settings.new_download_max_upload_limit.clone();
         self.add.feedback = None;
     }
 
@@ -1030,11 +1344,16 @@ impl State {
 
         self.add.open = false;
         self.add.input.clear();
+        self.add.output_filename.clear();
+        self.add.max_download_limit.clear();
+        self.add.max_upload_limit.clear();
         self.add.feedback = None;
     }
 
     pub(super) fn cancel_active_modal(&mut self) {
-        if self.add.open {
+        if self.actions.pending_confirmation.is_some() {
+            self.cancel_pending_action();
+        } else if self.add.open {
             self.cancel_add_dialog();
         } else if self.settings.open {
             self.cancel_settings();
@@ -1058,13 +1377,34 @@ impl State {
         self.add.feedback = None;
     }
 
-    pub(super) fn begin_add_uri(&mut self) -> Option<(u64, Settings, String)> {
+    pub(super) fn set_add_output_filename(&mut self, output_filename: String) {
+        self.add.output_filename = output_filename;
+        self.add.feedback = None;
+    }
+
+    pub(super) fn set_add_max_download_limit(&mut self, limit: String) {
+        self.add.max_download_limit = limit;
+        self.add.feedback = None;
+    }
+
+    pub(super) fn set_add_max_upload_limit(&mut self, limit: String) {
+        self.add.max_upload_limit = limit;
+        self.add.feedback = None;
+    }
+
+    pub(super) fn begin_add_uri(&mut self) -> Option<(u64, Settings, String, AddUriOptions)> {
         let uri = match validate_add_input(&self.add.input) {
             Ok(uri) => uri,
             Err(_message) => {
                 return None;
             }
         };
+        if validate_output_filename(&self.add.output_filename).is_err()
+            || validate_speed_limit(&self.add.max_download_limit).is_err()
+            || validate_speed_limit(&self.add.max_upload_limit).is_err()
+        {
+            return None;
+        }
 
         let Some(settings) = self.connection.settings.clone() else {
             self.add.feedback = Some(FormFeedback::warning(
@@ -1076,8 +1416,14 @@ impl State {
         self.add.generation += 1;
         self.add.pending = true;
         self.add.feedback = Some(FormFeedback::info("Adding download..."));
+        let options = AddUriOptions::new(
+            clean_optional(&self.settings.new_download_directory),
+            clean_optional(&self.add.output_filename),
+            clean_optional(&self.add.max_download_limit),
+            clean_optional(&self.add.max_upload_limit),
+        );
 
-        Some((self.add.generation, settings, uri))
+        Some((self.add.generation, settings, uri, options))
     }
 
     pub(super) fn finish_add_uri(
@@ -1118,6 +1464,19 @@ impl State {
             }
         }
         self.settings.draft.cancel_to(&self.settings.applied);
+        self.settings.draft_new_download_directory = self.settings.new_download_directory.clone();
+        self.settings.draft_new_download_output_filename =
+            self.settings.new_download_output_filename.clone();
+        self.settings.draft_new_download_max_download_limit =
+            self.settings.new_download_max_download_limit.clone();
+        self.settings.draft_new_download_max_upload_limit =
+            self.settings.new_download_max_upload_limit.clone();
+        self.settings.draft_runtime_max_concurrent_downloads =
+            self.settings.runtime_max_concurrent_downloads.clone();
+        self.settings.draft_runtime_max_overall_download_limit =
+            self.settings.runtime_max_overall_download_limit.clone();
+        self.settings.draft_runtime_max_overall_upload_limit =
+            self.settings.runtime_max_overall_upload_limit.clone();
         self.settings.feedback = None;
         self.settings.open = false;
     }
@@ -1139,16 +1498,93 @@ impl State {
         }
     }
 
-    pub(super) fn save_settings(&mut self) {
+    pub(super) fn save_settings(&mut self) -> Option<(u64, Settings, RuntimeGlobalOptions)> {
         match self.settings.draft.apply() {
             Ok(settings) => {
+                if let Some(message) = self.settings_validation_message() {
+                    self.settings.feedback = Some(FormFeedback::error(message));
+                    self.settings.open = true;
+                    return None;
+                }
+                self.settings.new_download_directory =
+                    self.settings.draft_new_download_directory.trim().to_owned();
+                self.settings.new_download_output_filename = self
+                    .settings
+                    .draft_new_download_output_filename
+                    .trim()
+                    .to_owned();
+                self.settings.new_download_max_download_limit = self
+                    .settings
+                    .draft_new_download_max_download_limit
+                    .trim()
+                    .to_owned();
+                self.settings.new_download_max_upload_limit = self
+                    .settings
+                    .draft_new_download_max_upload_limit
+                    .trim()
+                    .to_owned();
+                self.settings.runtime_max_concurrent_downloads = self
+                    .settings
+                    .draft_runtime_max_concurrent_downloads
+                    .trim()
+                    .to_owned();
+                self.settings.runtime_max_overall_download_limit = self
+                    .settings
+                    .draft_runtime_max_overall_download_limit
+                    .trim()
+                    .to_owned();
+                self.settings.runtime_max_overall_upload_limit = self
+                    .settings
+                    .draft_runtime_max_overall_upload_limit
+                    .trim()
+                    .to_owned();
+                let directory = self.settings.new_download_directory.clone();
                 let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
                 self.commit_settings(settings, previous_endpoint, true, "Settings saved.");
+                let runtime_options = RuntimeGlobalOptions::with_values(
+                    clean_optional(&directory),
+                    clean_optional(&self.settings.runtime_max_concurrent_downloads),
+                    clean_optional(&self.settings.runtime_max_overall_download_limit),
+                    clean_optional(&self.settings.runtime_max_overall_upload_limit),
+                );
+                if runtime_options.clone().into_rpc_options().is_empty() {
+                    return None;
+                }
+                self.connection
+                    .settings
+                    .clone()
+                    .filter(|settings| {
+                        settings.endpoint() == self.settings.applied.endpoint()
+                            && settings.auth() == self.settings.applied.auth()
+                    })
+                    .map(|settings| {
+                        self.settings.runtime_options_generation += 1;
+                        (
+                            self.settings.runtime_options_generation,
+                            settings,
+                            runtime_options,
+                        )
+                    })
             }
             Err(_error) => {
                 self.settings.open = true;
+                None
             }
         }
+    }
+
+    fn settings_validation_message(&self) -> Option<&'static str> {
+        [
+            validate_output_filename(&self.settings.draft_new_download_output_filename).err(),
+            validate_speed_limit(&self.settings.draft_new_download_max_download_limit).err(),
+            validate_speed_limit(&self.settings.draft_new_download_max_upload_limit).err(),
+            validate_positive_integer(&self.settings.draft_runtime_max_concurrent_downloads).err(),
+            validate_speed_limit(&self.settings.draft_runtime_max_overall_download_limit).err(),
+            validate_speed_limit(&self.settings.draft_runtime_max_overall_upload_limit).err(),
+        ]
+        .into_iter()
+        .flatten()
+        .next()
     }
 
     pub(super) fn save_plaintext_fallback(&mut self) {
@@ -1264,6 +1700,16 @@ impl State {
             self.downloads.filter.config_value(),
             auth_storage,
             self.settings.theme_preference,
+        )
+        .with_ui_preferences(
+            self.settings.confirm_destructive_actions,
+            self.settings.notify_download_outcomes,
+        )
+        .with_new_download_directory(self.settings.new_download_directory.clone())
+        .with_new_download_defaults(
+            self.settings.new_download_output_filename.clone(),
+            self.settings.new_download_max_download_limit.clone(),
+            self.settings.new_download_max_upload_limit.clone(),
         );
 
         if let Some(path) = self.settings.config_path.as_ref()
@@ -1319,6 +1765,16 @@ impl State {
             self.downloads.filter.config_value(),
             self.settings.auth_storage,
             self.settings.theme_preference,
+        )
+        .with_ui_preferences(
+            self.settings.confirm_destructive_actions,
+            self.settings.notify_download_outcomes,
+        )
+        .with_new_download_directory(self.settings.new_download_directory.clone())
+        .with_new_download_defaults(
+            self.settings.new_download_output_filename.clone(),
+            self.settings.new_download_max_download_limit.clone(),
+            self.settings.new_download_max_upload_limit.clone(),
         );
 
         if let Some(path) = self.settings.config_path.as_ref()
@@ -1354,7 +1810,16 @@ impl State {
             }
 
             if let Some(record) = self.downloads.items_by_gid.get_mut(&gid) {
+                let previous_status = record.item.status().clone();
                 record.merge(item, merge_tick);
+                let intent = notification_intent_for_transition(
+                    self.settings.notify_download_outcomes,
+                    &previous_status,
+                    &record.item,
+                );
+                if let Some(intent) = intent {
+                    self.notification_intents.push(intent);
+                }
             } else {
                 self.downloads
                     .items_by_gid
@@ -1425,6 +1890,7 @@ impl State {
         self.downloads.refresh_state = RefreshState::NeverRefreshed;
         self.downloads.feedback = None;
         self.actions.pending = None;
+        self.actions.pending_confirmation = None;
         self.actions.feedback = None;
         self.selection.selected_gid = None;
         self.selection.file_tree_gid = None;
@@ -1496,6 +1962,9 @@ struct ConnectionState {
 struct AddState {
     open: bool,
     input: String,
+    output_filename: String,
+    max_download_limit: String,
+    max_upload_limit: String,
     generation: u64,
     pending: bool,
     feedback: Option<FormFeedback>,
@@ -1506,6 +1975,23 @@ struct SettingsState {
     applied: Settings,
     draft: SettingsDraft,
     theme_preference: ThemePreference,
+    confirm_destructive_actions: bool,
+    notify_download_outcomes: bool,
+    new_download_directory: String,
+    draft_new_download_directory: String,
+    new_download_output_filename: String,
+    draft_new_download_output_filename: String,
+    new_download_max_download_limit: String,
+    draft_new_download_max_download_limit: String,
+    new_download_max_upload_limit: String,
+    draft_new_download_max_upload_limit: String,
+    runtime_max_concurrent_downloads: String,
+    draft_runtime_max_concurrent_downloads: String,
+    runtime_max_overall_download_limit: String,
+    draft_runtime_max_overall_download_limit: String,
+    runtime_max_overall_upload_limit: String,
+    draft_runtime_max_overall_upload_limit: String,
+    runtime_options_generation: u64,
     open: bool,
     feedback: Option<FormFeedback>,
     config_path: Option<PathBuf>,
@@ -1665,7 +2151,36 @@ impl DownloadRecord {
 struct ActionsState {
     generation: u64,
     pending: Option<RunningAction>,
+    pending_confirmation: Option<RunningAction>,
     feedback: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingActionConfirmation {
+    Remove(Gid),
+    PurgeStopped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationIntent {
+    gid: Gid,
+    outcome: NotificationOutcome,
+}
+
+impl NotificationIntent {
+    pub fn gid(&self) -> &Gid {
+        &self.gid
+    }
+
+    pub fn outcome(&self) -> NotificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationOutcome {
+    Complete,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1718,6 +2233,10 @@ impl RunningAction {
             Self::Pause(gid) | Self::Unpause(gid) | Self::Remove(gid) => Some(gid),
             Self::PurgeStopped => None,
         }
+    }
+
+    fn requires_confirmation(&self) -> bool {
+        matches!(self, Self::Remove(_) | Self::PurgeStopped)
     }
 }
 
@@ -1833,6 +2352,31 @@ fn download_detail_view(record: &DownloadRecord) -> DownloadDetailView {
         torrent,
         error: item.command_error().map(str::to_owned),
     }
+}
+
+fn notification_intent_for_transition(
+    enabled: bool,
+    previous_status: &DownloadStatus,
+    item: &DownloadItem,
+) -> Option<NotificationIntent> {
+    if !enabled || previous_status == item.status() {
+        return None;
+    }
+
+    let outcome = match item.status() {
+        DownloadStatus::Complete => NotificationOutcome::Complete,
+        DownloadStatus::Error => NotificationOutcome::Failed,
+        DownloadStatus::Active
+        | DownloadStatus::Waiting
+        | DownloadStatus::Paused
+        | DownloadStatus::Removed
+        | DownloadStatus::Unknown(_) => return None,
+    };
+
+    Some(NotificationIntent {
+        gid: item.gid().clone(),
+        outcome,
+    })
 }
 
 fn download_name(item: &DownloadItem) -> String {
@@ -2149,4 +2693,48 @@ fn validate_add_input(input: &str) -> Result<String, &'static str> {
     }
 
     Err("Enter an http, https, or magnet link.")
+}
+
+fn validate_output_filename(value: &str) -> Result<(), &'static str> {
+    let value = value.trim();
+    if value.contains('/') || value.contains('\\') {
+        return Err("Output filename must not contain path separators.");
+    }
+
+    Ok(())
+}
+
+fn validate_speed_limit(value: &str) -> Result<(), &'static str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+
+    value
+        .parse::<u64>()
+        .map(|_| ())
+        .map_err(|_| "Speed limit must be an unsigned integer in bytes per second.")
+}
+
+fn validate_positive_integer(value: &str) -> Result<(), &'static str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+
+    value
+        .parse::<u32>()
+        .ok()
+        .filter(|value| *value > 0)
+        .map(|_| ())
+        .ok_or("Max concurrent downloads must be a positive integer.")
+}
+
+fn clean_optional(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }

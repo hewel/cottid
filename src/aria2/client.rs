@@ -2,16 +2,18 @@ use serde_json::to_string;
 
 #[cfg(test)]
 use crate::aria2::domain::GlobalStats;
-use crate::aria2::domain::{DownloadSnapshot, Gid, VersionInfo};
+use crate::aria2::domain::{
+    AddUriOptions, DownloadSnapshot, Gid, RuntimeGlobalOptions, VersionInfo,
+};
 use crate::aria2::errors::ClientError;
 #[cfg(test)]
 use crate::aria2::methods::build_get_global_stat_request;
 use crate::aria2::methods::{
-    JsonRpcRequest, RequestId, build_add_uri_request, build_get_global_stat_call,
-    build_get_version_request, build_multicall_request, build_pause_request,
-    build_purge_stopped_request, build_remove_request, build_tell_active_call,
-    build_tell_status_call, build_tell_stopped_call, build_tell_waiting_call,
-    build_unpause_request,
+    JsonRpcRequest, RequestId, build_add_uri_request, build_change_global_option_request,
+    build_get_global_option_request, build_get_global_stat_call, build_get_version_request,
+    build_multicall_request, build_pause_request, build_purge_stopped_request,
+    build_remove_request, build_tell_active_call, build_tell_status_call, build_tell_stopped_call,
+    build_tell_waiting_call, build_unpause_request,
 };
 #[cfg(test)]
 use crate::aria2::raw_types::parse_global_stats_response;
@@ -31,6 +33,8 @@ const UNPAUSE_REQUEST_ID: RequestId = RequestId::new(8);
 const REMOVE_REQUEST_ID: RequestId = RequestId::new(9);
 const PURGE_STOPPED_REQUEST_ID: RequestId = RequestId::new(10);
 const SNAPSHOT_MULTICALL_REQUEST_ID: RequestId = RequestId::new(11);
+const GET_GLOBAL_OPTION_REQUEST_ID: RequestId = RequestId::new(12);
+const CHANGE_GLOBAL_OPTION_REQUEST_ID: RequestId = RequestId::new(13);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -294,9 +298,46 @@ pub async fn fetch_download_snapshot_with_request(
         .await
 }
 
-pub async fn add_uri(settings: Settings, uri: String) -> Result<Gid, ClientError> {
+pub async fn get_runtime_global_options(
+    settings: Settings,
+) -> Result<RuntimeGlobalOptions, ClientError> {
     let transport = ReqwestTransport::new();
-    let request = build_add_uri_request(ADD_URI_REQUEST_ID, secret(&settings), &uri);
+    let request = build_get_global_option_request(GET_GLOBAL_OPTION_REQUEST_ID, secret(&settings));
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    crate::aria2::raw_types::parse_runtime_global_options_response(
+        &body,
+        GET_GLOBAL_OPTION_REQUEST_ID,
+    )
+}
+
+pub async fn change_runtime_global_options(
+    settings: Settings,
+    options: RuntimeGlobalOptions,
+) -> Result<(), ClientError> {
+    let transport = ReqwestTransport::new();
+    let request = build_change_global_option_request(
+        CHANGE_GLOBAL_OPTION_REQUEST_ID,
+        secret(&settings),
+        options.into_rpc_options(),
+    );
+    let body = send_rpc_request_async(&settings, &transport, request).await?;
+
+    parse_ok_response(&body, CHANGE_GLOBAL_OPTION_REQUEST_ID)
+}
+
+pub async fn add_uri(
+    settings: Settings,
+    uri: String,
+    options: AddUriOptions,
+) -> Result<Gid, ClientError> {
+    let transport = ReqwestTransport::new();
+    let request = build_add_uri_request(
+        ADD_URI_REQUEST_ID,
+        secret(&settings),
+        &uri,
+        options.into_rpc_options(),
+    );
     let body = send_rpc_request_async(&settings, &transport, request).await?;
 
     parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
@@ -376,11 +417,47 @@ pub fn add_uri_with_transport(
     settings: &Settings,
     transport: &impl Transport,
     uri: &str,
+    options: AddUriOptions,
 ) -> Result<Gid, ClientError> {
-    let request = build_add_uri_request(ADD_URI_REQUEST_ID, secret(settings), uri);
+    let request = build_add_uri_request(
+        ADD_URI_REQUEST_ID,
+        secret(settings),
+        uri,
+        options.into_rpc_options(),
+    );
     let body = send_rpc_request(settings, transport, request)?;
 
     parse_add_uri_response(&body, ADD_URI_REQUEST_ID)
+}
+
+#[cfg(test)]
+pub fn get_runtime_global_options_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+) -> Result<RuntimeGlobalOptions, ClientError> {
+    let request = build_get_global_option_request(GET_GLOBAL_OPTION_REQUEST_ID, secret(settings));
+    let body = send_rpc_request(settings, transport, request)?;
+
+    crate::aria2::raw_types::parse_runtime_global_options_response(
+        &body,
+        GET_GLOBAL_OPTION_REQUEST_ID,
+    )
+}
+
+#[cfg(test)]
+pub fn change_runtime_global_options_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+    options: RuntimeGlobalOptions,
+) -> Result<(), ClientError> {
+    let request = build_change_global_option_request(
+        CHANGE_GLOBAL_OPTION_REQUEST_ID,
+        secret(settings),
+        options.into_rpc_options(),
+    );
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_ok_response(&body, CHANGE_GLOBAL_OPTION_REQUEST_ID)
 }
 
 #[cfg(test)]
@@ -545,12 +622,13 @@ mod tests {
 
     use super::{
         BatchRefreshRequest, DEFAULT_STOPPED_REFRESH_LIMIT, HttpPost, HttpResponse, Transport,
-        add_uri_with_transport, fetch_download_snapshot_with_transport,
-        fetch_download_snapshot_with_transport_and_request, fetch_global_stats_with_transport,
+        add_uri_with_transport, change_runtime_global_options_with_transport,
+        fetch_download_snapshot_with_transport, fetch_download_snapshot_with_transport_and_request,
+        fetch_global_stats_with_transport, get_runtime_global_options_with_transport,
         pause_with_transport, purge_stopped_with_transport, remove_with_transport,
         test_connection_with_transport, unpause_with_transport,
     };
-    use crate::aria2::domain::Gid;
+    use crate::aria2::domain::{AddUriOptions, Gid, RuntimeGlobalOptions};
     use crate::aria2::errors::ClientError;
     use crate::config::{RpcAuth, Secret, Settings, SettingsDraft};
 
@@ -750,8 +828,13 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":6,"result":"new-gid"}"#,
         )));
 
-        let gid = add_uri_with_transport(&settings, &transport, "https://example.test/file")
-            .expect("addUri should return gid");
+        let gid = add_uri_with_transport(
+            &settings,
+            &transport,
+            "https://example.test/file",
+            AddUriOptions::default(),
+        )
+        .expect("addUri should return gid");
 
         assert_eq!(gid.as_str(), "new-gid");
 
@@ -760,6 +843,80 @@ mod tests {
         assert_eq!(body["method"], "aria2.addUri");
         assert_eq!(body["id"], 6);
         assert_eq!(body["params"][0][0], "https://example.test/file");
+        assert_eq!(body["params"].as_array().expect("params").len(), 1);
+    }
+
+    #[test]
+    fn add_uri_posts_modeled_options_when_present() {
+        let settings = Settings::default();
+        let transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":6,"result":"new-gid"}"#,
+        )));
+
+        add_uri_with_transport(
+            &settings,
+            &transport,
+            "https://example.test/file",
+            AddUriOptions::new(
+                Some("/downloads".to_owned()),
+                Some("file.iso".to_owned()),
+                Some("1024".to_owned()),
+                Some("2048".to_owned()),
+            ),
+        )
+        .expect("addUri should return gid");
+
+        let posts = transport.posts.borrow();
+        let body: Value = serde_json::from_str(posts[0].body()).expect("request body is JSON");
+        assert_eq!(body["method"], "aria2.addUri");
+        assert_eq!(body["params"][0][0], "https://example.test/file");
+        assert_eq!(body["params"][1]["dir"], "/downloads");
+        assert_eq!(body["params"][1]["out"], "file.iso");
+        assert_eq!(body["params"][1]["max-download-limit"], "1024");
+        assert_eq!(body["params"][1]["max-upload-limit"], "2048");
+    }
+
+    #[test]
+    fn runtime_global_options_fetch_and_change_are_modeled() {
+        let settings = Settings::default();
+        let fetch_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":12,"result":{"dir":"/downloads","max-concurrent-downloads":"6","max-overall-download-limit":"4096","max-overall-upload-limit":"512","save-session":"/tmp/session"}}"#,
+        )));
+
+        let options = get_runtime_global_options_with_transport(&settings, &fetch_transport)
+            .expect("global options should parse");
+
+        assert_eq!(options.directory(), Some("/downloads"));
+        assert_eq!(options.max_concurrent_downloads(), Some("6"));
+        let fetch_body: Value =
+            serde_json::from_str(fetch_transport.posts.borrow()[0].body()).expect("json");
+        assert_eq!(fetch_body["method"], "aria2.getGlobalOption");
+
+        let change_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":13,"result":"OK"}"#,
+        )));
+        change_runtime_global_options_with_transport(
+            &settings,
+            &change_transport,
+            RuntimeGlobalOptions::with_values(
+                Some("/new-downloads".to_owned()),
+                Some("8".to_owned()),
+                Some("8192".to_owned()),
+                Some("1024".to_owned()),
+            ),
+        )
+        .expect("global options should change");
+
+        let change_body: Value =
+            serde_json::from_str(change_transport.posts.borrow()[0].body()).expect("json");
+        assert_eq!(change_body["method"], "aria2.changeGlobalOption");
+        assert_eq!(change_body["params"][0]["dir"], "/new-downloads");
+        assert_eq!(change_body["params"][0]["max-concurrent-downloads"], "8");
+        assert_eq!(
+            change_body["params"][0]["max-overall-download-limit"],
+            "8192"
+        );
+        assert_eq!(change_body["params"][0]["max-overall-upload-limit"], "1024");
     }
 
     #[test]
@@ -770,7 +927,12 @@ mod tests {
         )));
 
         assert!(matches!(
-            add_uri_with_transport(&settings, &transport, "https://example.test/file"),
+            add_uri_with_transport(
+                &settings,
+                &transport,
+                "https://example.test/file",
+                AddUriOptions::default(),
+            ),
             Err(ClientError::Rpc { code: 1, .. })
         ));
 
@@ -779,7 +941,12 @@ mod tests {
         )));
 
         assert!(matches!(
-            add_uri_with_transport(&settings, &transport, "https://example.test/file"),
+            add_uri_with_transport(
+                &settings,
+                &transport,
+                "https://example.test/file",
+                AddUriOptions::default(),
+            ),
             Err(ClientError::MalformedResponse(_))
         ));
     }

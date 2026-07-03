@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
     version: String,
@@ -422,4 +424,119 @@ impl VersionInfo {
     pub fn enabled_features(&self) -> &[String] {
         &self.enabled_features
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AddUriOptions {
+    directory: Option<String>,
+    output_filename: Option<String>,
+    max_download_limit: Option<String>,
+    max_upload_limit: Option<String>,
+}
+
+impl AddUriOptions {
+    pub fn new(
+        directory: Option<String>,
+        output_filename: Option<String>,
+        max_download_limit: Option<String>,
+        max_upload_limit: Option<String>,
+    ) -> Self {
+        Self {
+            directory: directory.and_then(non_empty_string),
+            output_filename: output_filename.and_then(non_empty_string),
+            max_download_limit: max_download_limit.and_then(non_empty_string),
+            max_upload_limit: max_upload_limit.and_then(non_empty_string),
+        }
+    }
+
+    pub fn into_rpc_options(self) -> BTreeMap<String, String> {
+        let mut options = BTreeMap::new();
+        if let Some(directory) = self.directory {
+            options.insert("dir".to_owned(), directory);
+        }
+        if let Some(output_filename) = self.output_filename {
+            options.insert("out".to_owned(), output_filename);
+        }
+        if let Some(max_download_limit) = self.max_download_limit {
+            options.insert("max-download-limit".to_owned(), max_download_limit);
+        }
+        if let Some(max_upload_limit) = self.max_upload_limit {
+            options.insert("max-upload-limit".to_owned(), max_upload_limit);
+        }
+        options
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeGlobalOptions {
+    directory: Option<String>,
+    max_concurrent_downloads: Option<String>,
+    max_overall_download_limit: Option<String>,
+    max_overall_upload_limit: Option<String>,
+}
+
+impl RuntimeGlobalOptions {
+    pub fn new(directory: Option<String>) -> Self {
+        Self::with_values(directory, None, None, None)
+    }
+
+    pub fn with_values(
+        directory: Option<String>,
+        max_concurrent_downloads: Option<String>,
+        max_overall_download_limit: Option<String>,
+        max_overall_upload_limit: Option<String>,
+    ) -> Self {
+        Self {
+            directory: directory.and_then(non_empty_string),
+            max_concurrent_downloads: max_concurrent_downloads.and_then(non_empty_string),
+            max_overall_download_limit: max_overall_download_limit.and_then(non_empty_string),
+            max_overall_upload_limit: max_overall_upload_limit.and_then(non_empty_string),
+        }
+    }
+
+    pub fn directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
+    pub fn max_concurrent_downloads(&self) -> Option<&str> {
+        self.max_concurrent_downloads.as_deref()
+    }
+
+    pub fn max_overall_download_limit(&self) -> Option<&str> {
+        self.max_overall_download_limit.as_deref()
+    }
+
+    pub fn max_overall_upload_limit(&self) -> Option<&str> {
+        self.max_overall_upload_limit.as_deref()
+    }
+
+    pub fn into_rpc_options(self) -> BTreeMap<String, String> {
+        let mut options = BTreeMap::new();
+        if let Some(directory) = self.directory {
+            options.insert("dir".to_owned(), directory);
+        }
+        if let Some(max_concurrent_downloads) = self.max_concurrent_downloads {
+            options.insert(
+                "max-concurrent-downloads".to_owned(),
+                max_concurrent_downloads,
+            );
+        }
+        if let Some(max_overall_download_limit) = self.max_overall_download_limit {
+            options.insert(
+                "max-overall-download-limit".to_owned(),
+                max_overall_download_limit,
+            );
+        }
+        if let Some(max_overall_upload_limit) = self.max_overall_upload_limit {
+            options.insert(
+                "max-overall-upload-limit".to_owned(),
+                max_overall_upload_limit,
+            );
+        }
+        options
+    }
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
 }

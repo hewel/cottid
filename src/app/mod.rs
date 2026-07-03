@@ -13,9 +13,11 @@ pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
     RefreshInvalidation, SelectionMessage, SettingsMessage, TextInputFocusTarget, ToolbarMessage,
 };
+#[cfg(test)]
+pub use state::NotificationOutcome;
 pub use state::{
     ConnectionStatus, DownloadDetailView, DownloadFilter, DownloadRowView, FeedbackTone, FileIcon,
-    FormFeedback, RefreshState, State,
+    FormFeedback, PendingActionConfirmation, RefreshState, State,
 };
 
 pub fn run() -> iced::Result {
@@ -68,7 +70,7 @@ mod tests {
     use crate::aria2::client::ConnectionTest;
     use crate::aria2::domain::{
         DownloadDetail, DownloadFile, DownloadItem, DownloadSnapshot, DownloadStatus, Gid,
-        GlobalStats, TorrentDetail, VersionInfo,
+        GlobalStats, RuntimeGlobalOptions, TorrentDetail, VersionInfo,
     };
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
@@ -78,27 +80,47 @@ mod tests {
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadsMessage, FeedbackTone, FileIcon, Message, RefreshInvalidation,
-        RefreshState, SelectionMessage, SettingsMessage, State, TextInputFocusTarget,
-        ToolbarMessage,
+        DownloadFilter, DownloadsMessage, FeedbackTone, FileIcon, Message, NotificationOutcome,
+        PendingActionConfirmation, RefreshInvalidation, RefreshState, SelectionMessage,
+        SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
     };
 
     #[test]
     fn text_input_focus_targets_use_stable_widget_ids() {
+        let ids = [
+            TextInputFocusTarget::AddUri.id_value(),
+            TextInputFocusTarget::SettingsEndpoint.id_value(),
+            TextInputFocusTarget::SettingsSecret.id_value(),
+            TextInputFocusTarget::SettingsPollingInterval.id_value(),
+            TextInputFocusTarget::SettingsNewDownloadDirectory.id_value(),
+            TextInputFocusTarget::SettingsNewDownloadOutput.id_value(),
+            TextInputFocusTarget::SettingsNewDownloadDownloadLimit.id_value(),
+            TextInputFocusTarget::SettingsNewDownloadUploadLimit.id_value(),
+            TextInputFocusTarget::SettingsRuntimeMaxConcurrent.id_value(),
+            TextInputFocusTarget::SettingsRuntimeDownloadLimit.id_value(),
+            TextInputFocusTarget::SettingsRuntimeUploadLimit.id_value(),
+        ];
         assert_eq!(
-            [
-                TextInputFocusTarget::AddUri.id_value(),
-                TextInputFocusTarget::SettingsEndpoint.id_value(),
-                TextInputFocusTarget::SettingsSecret.id_value(),
-                TextInputFocusTarget::SettingsPollingInterval.id_value(),
-            ],
+            ids,
             [
                 "add-uri-input",
                 "settings-endpoint-input",
                 "settings-secret-input",
                 "settings-polling-interval-input",
+                "settings-new-download-directory-input",
+                "settings-new-download-output-input",
+                "settings-new-download-download-limit-input",
+                "settings-new-download-upload-limit-input",
+                "settings-runtime-max-concurrent-input",
+                "settings-runtime-download-limit-input",
+                "settings-runtime-upload-limit-input",
             ]
         );
+        assert!(ids.iter().all(|id| {
+            !id.contains("profile")
+                && !id.contains("save-session")
+                && !id.contains("browser-notification")
+        }));
     }
 
     #[test]
@@ -236,6 +258,27 @@ mod tests {
         let _task = super::update(&mut state, Message::ModalCancel);
 
         assert!(!state.is_settings_open());
+    }
+
+    #[test]
+    fn modal_cancel_closes_pending_action_confirmation() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        let _task = super::update(&mut state, Message::ModalCancel);
+
+        assert_eq!(state.pending_action_confirmation(), None);
+        assert!(!state.download_rows()[0].pending());
     }
 
     #[test]
@@ -383,6 +426,30 @@ mod tests {
             &mut state,
             Message::Settings(SettingsMessage::PollingIntervalChanged("7".to_owned())),
         );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(
+                "/downloads".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadOutputFilenameChanged(
+                "file.iso".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadMaxDownloadLimitChanged(
+                "1024".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadMaxUploadLimitChanged(
+                "2048".to_owned(),
+            )),
+        );
         let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
 
         let reloaded = State::load_from_path(path);
@@ -392,7 +459,345 @@ mod tests {
             "http://aria2.local:6800/jsonrpc"
         );
         assert_eq!(reloaded.draft_polling_interval_seconds(), 7);
+        assert_eq!(reloaded.draft_new_download_directory(), "/downloads");
+        assert_eq!(reloaded.draft_new_download_output_filename(), "file.iso");
+        assert_eq!(reloaded.draft_new_download_max_download_limit(), "1024");
+        assert_eq!(reloaded.draft_new_download_max_upload_limit(), "2048");
         assert_eq!(reloaded.applied_auth_label(), "No authentication");
+    }
+
+    #[test]
+    fn saved_new_download_directory_flows_into_add_options() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(
+                "/downloads".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+
+        let (_generation, _settings, _uri, options) =
+            state.begin_add_uri().expect("valid add request");
+
+        let rpc_options = options.into_rpc_options();
+        assert_eq!(
+            rpc_options.get("dir").map(String::as_str),
+            Some("/downloads")
+        );
+    }
+
+    #[test]
+    fn add_dialog_uses_and_overrides_new_download_defaults() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadOutputFilenameChanged(
+                "default.iso".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadMaxDownloadLimitChanged(
+                "1024".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadMaxUploadLimitChanged(
+                "2048".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        assert_eq!(state.add_output_filename(), "default.iso");
+        assert_eq!(state.add_max_download_limit(), "1024");
+        assert_eq!(state.add_max_upload_limit(), "2048");
+
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::OutputFilenameChanged("override.iso".to_owned())),
+        );
+        let (_generation, _settings, _uri, options) =
+            state.begin_add_uri().expect("valid add request");
+
+        let rpc_options = options.into_rpc_options();
+        assert_eq!(
+            rpc_options.get("out").map(String::as_str),
+            Some("override.iso")
+        );
+        assert_eq!(
+            rpc_options.get("max-download-limit").map(String::as_str),
+            Some("1024")
+        );
+        assert_eq!(
+            rpc_options.get("max-upload-limit").map(String::as_str),
+            Some("2048")
+        );
+    }
+
+    #[test]
+    fn invalid_add_defaults_block_add_rpc() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::OutputFilenameChanged("bad/name.iso".to_owned())),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::MaxDownloadLimitChanged("fast".to_owned())),
+        );
+
+        assert_eq!(
+            state.add_output_filename_validation_message(),
+            Some("Output filename must not contain path separators.")
+        );
+        assert_eq!(
+            state.add_max_download_limit_validation_message(),
+            Some("Speed limit must be an unsigned integer in bytes per second.")
+        );
+        assert!(state.begin_add_uri().is_none());
+    }
+
+    #[test]
+    fn fetched_runtime_directory_updates_displayed_directory_draft() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(
+                "/old".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+        let (generation, settings) = state.begin_runtime_global_options_fetch(Settings::default());
+
+        state.apply_runtime_global_options(
+            generation,
+            settings,
+            Ok(RuntimeGlobalOptions::with_values(
+                Some("/daemon".to_owned()),
+                Some("5".to_owned()),
+                Some("1024".to_owned()),
+                Some("2048".to_owned()),
+            )),
+        );
+
+        assert_eq!(state.draft_new_download_directory(), "/daemon");
+        assert_eq!(state.draft_runtime_max_concurrent_downloads(), "5");
+        assert_eq!(state.draft_runtime_max_overall_download_limit(), "1024");
+        assert_eq!(state.draft_runtime_max_overall_upload_limit(), "2048");
+    }
+
+    #[test]
+    fn stale_runtime_directory_fetch_is_ignored() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let (stale_generation, stale_settings) =
+            state.begin_runtime_global_options_fetch(Settings::default());
+        let (current_generation, current_settings) =
+            state.begin_runtime_global_options_fetch(Settings::default());
+
+        state.apply_runtime_global_options(
+            stale_generation,
+            stale_settings,
+            Ok(RuntimeGlobalOptions::new(Some("/stale".to_owned()))),
+        );
+        state.apply_runtime_global_options(
+            current_generation,
+            current_settings,
+            Ok(RuntimeGlobalOptions::new(Some("/current".to_owned()))),
+        );
+
+        assert_eq!(state.draft_new_download_directory(), "/current");
+    }
+
+    #[test]
+    fn stale_runtime_directory_save_result_is_ignored() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(
+                "/downloads".to_owned(),
+            )),
+        );
+        let (stale_generation, stale_settings, _options) =
+            state.save_settings().expect("runtime save requested");
+        let _current = state.begin_runtime_global_options_fetch(Settings::default());
+
+        state.finish_runtime_global_options_save(
+            stale_generation,
+            stale_settings,
+            Err(ClientError::Transport("connection refused".to_owned())),
+        );
+
+        assert!(!state.is_settings_open());
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.message()),
+            Some("Settings saved.")
+        );
+    }
+
+    #[test]
+    fn saving_polling_and_directory_for_same_endpoint_updates_runtime_directory() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::PollingIntervalChanged("7".to_owned())),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(
+                "/downloads".to_owned(),
+            )),
+        );
+
+        let (_generation, settings, options) =
+            state.save_settings().expect("runtime save requested");
+
+        assert_eq!(settings.endpoint(), "http://localhost:6800/jsonrpc");
+        let rpc_options = options.into_rpc_options();
+        assert_eq!(
+            rpc_options.get("dir").map(String::as_str),
+            Some("/downloads")
+        );
+    }
+
+    #[test]
+    fn clearing_new_download_directory_omits_add_options_and_runtime_save() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let (generation, settings) = state.begin_runtime_global_options_fetch(Settings::default());
+        state.apply_runtime_global_options(
+            generation,
+            settings,
+            Ok(RuntimeGlobalOptions::new(Some("/daemon".to_owned()))),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NewDownloadDirectoryChanged(String::new())),
+        );
+
+        assert!(state.save_settings().is_none());
+
+        let _task = super::update(&mut state, Message::Add(AddMessage::Open));
+        let _task = super::update(
+            &mut state,
+            Message::Add(AddMessage::InputChanged(
+                "https://example.test/file".to_owned(),
+            )),
+        );
+        let (_generation, _settings, _uri, options) =
+            state.begin_add_uri().expect("valid add request");
+
+        assert!(options.into_rpc_options().is_empty());
+    }
+
+    #[test]
+    fn runtime_quick_controls_save_only_modeled_options() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::RuntimeMaxConcurrentDownloadsChanged(
+                "6".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::RuntimeMaxOverallDownloadLimitChanged(
+                "4096".to_owned(),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::RuntimeMaxOverallUploadLimitChanged(
+                "512".to_owned(),
+            )),
+        );
+
+        let (_generation, _settings, options) =
+            state.save_settings().expect("runtime save requested");
+        let rpc_options = options.into_rpc_options();
+
+        assert_eq!(
+            rpc_options
+                .get("max-concurrent-downloads")
+                .map(String::as_str),
+            Some("6")
+        );
+        assert_eq!(
+            rpc_options
+                .get("max-overall-download-limit")
+                .map(String::as_str),
+            Some("4096")
+        );
+        assert_eq!(
+            rpc_options
+                .get("max-overall-upload-limit")
+                .map(String::as_str),
+            Some("512")
+        );
+        assert!(!rpc_options.contains_key("save-session"));
+    }
+
+    #[test]
+    fn invalid_runtime_quick_controls_block_save() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::RuntimeMaxConcurrentDownloadsChanged(
+                "0".to_owned(),
+            )),
+        );
+
+        assert!(state.save_settings().is_none());
+        assert_eq!(
+            state.settings_feedback().map(|feedback| feedback.message()),
+            Some("Max concurrent downloads must be a positive integer.")
+        );
+        assert!(state.is_settings_open());
+    }
+
+    #[test]
+    fn saving_after_endpoint_change_does_not_update_old_daemon_runtime_options() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "http://aria2.local:6800/jsonrpc".to_owned(),
+            )),
+        );
+
+        assert!(state.save_settings().is_none());
     }
 
     #[test]
@@ -537,6 +942,32 @@ mod tests {
             Message::Toolbar(ToolbarMessage::CycleThemePreference),
         );
         assert_eq!(state.theme_preference(), ThemePreference::System);
+    }
+
+    #[test]
+    fn destructive_confirmation_preferences_persist() {
+        let path = temp_config_path("destructive-confirmation-preference");
+        let mut state = State::load_from_path(path.clone());
+
+        assert!(state.confirm_destructive_actions());
+        assert!(!state.notify_download_outcomes());
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::ConfirmDestructiveActionsChanged(false)),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NotifyDownloadOutcomesChanged(true)),
+        );
+
+        let contents = fs::read_to_string(&path).expect("config written");
+        let reloaded = State::load_from_path(path);
+
+        assert!(contents.contains("confirm_destructive_actions = false"));
+        assert!(contents.contains("notify_download_outcomes = true"));
+        assert!(!reloaded.confirm_destructive_actions());
+        assert!(reloaded.notify_download_outcomes());
     }
 
     #[test]
@@ -1001,6 +1432,7 @@ mod tests {
         );
 
         let _task = super::update(&mut state, Message::Action(ActionMessage::PurgeStopped));
+        let _task = super::update(&mut state, Message::Action(ActionMessage::ConfirmPending));
         let _task = super::update(
             &mut state,
             Message::Action(ActionMessage::Finished {
@@ -1015,6 +1447,137 @@ mod tests {
             Some("Connection failed. Check the endpoint and secret.")
         );
         assert_eq!(state.refresh_state(), RefreshState::Fresh);
+    }
+
+    #[test]
+    fn remove_requires_confirmation_when_preference_enabled() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let gid = Gid::new("active-gid").expect("valid gid");
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(gid.clone())),
+        );
+
+        assert_eq!(
+            state.pending_action_confirmation(),
+            Some(PendingActionConfirmation::Remove(gid))
+        );
+        assert!(!state.download_rows()[0].pending());
+
+        let _task = super::update(&mut state, Message::Action(ActionMessage::ConfirmPending));
+
+        assert_eq!(state.pending_action_confirmation(), None);
+        assert!(state.download_rows()[0].pending());
+    }
+
+    #[test]
+    fn purge_stopped_requires_confirmation_when_preference_enabled() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("complete-gid", DownloadStatus::Complete)],
+        );
+
+        let _task = super::update(&mut state, Message::Action(ActionMessage::PurgeStopped));
+
+        assert_eq!(
+            state.pending_action_confirmation(),
+            Some(PendingActionConfirmation::PurgeStopped)
+        );
+
+        let _task = super::update(&mut state, Message::Action(ActionMessage::ConfirmPending));
+
+        assert_eq!(state.pending_action_confirmation(), None);
+        assert!(!state.can_purge_stopped());
+    }
+
+    #[test]
+    fn cancel_destructive_confirmation_does_not_start_action() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Action(ActionMessage::CancelPending));
+
+        assert_eq!(state.pending_action_confirmation(), None);
+        assert!(!state.download_rows()[0].pending());
+        assert_eq!(state.refresh_state(), RefreshState::Fresh);
+    }
+
+    #[test]
+    fn disabled_destructive_confirmation_runs_action_immediately() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::ConfirmDestructiveActionsChanged(false)),
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(
+                Gid::new("active-gid").expect("valid gid"),
+            )),
+        );
+
+        assert_eq!(state.pending_action_confirmation(), None);
+        assert!(state.download_rows()[0].pending());
+    }
+
+    #[test]
+    fn action_in_flight_blocks_destructive_confirmation() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("first-gid", DownloadStatus::Active),
+                download_item("second-gid", DownloadStatus::Active),
+            ],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Pause(
+                Gid::new("first-gid").expect("valid gid"),
+            )),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Action(ActionMessage::Remove(
+                Gid::new("second-gid").expect("valid gid"),
+            )),
+        );
+
+        assert_eq!(state.pending_action_confirmation(), None);
+        assert_eq!(
+            state
+                .download_rows()
+                .iter()
+                .filter(|row| row.pending())
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1672,6 +2235,70 @@ mod tests {
         assert!(request.include_waiting());
         assert!(request.include_stopped());
         assert_eq!(request.selected_gid().map(Gid::as_str), Some("active-gid"));
+    }
+
+    #[test]
+    fn notification_preference_records_complete_and_error_transitions_once() {
+        let mut state = State::initial();
+        connect(&mut state);
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::NotifyDownloadOutcomesChanged(true)),
+        );
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("complete-gid", DownloadStatus::Active),
+                download_item("error-gid", DownloadStatus::Active),
+            ],
+        );
+
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("complete-gid", DownloadStatus::Complete),
+                download_item("error-gid", DownloadStatus::Error),
+            ],
+        );
+        apply_snapshot(
+            &mut state,
+            vec![
+                download_item("complete-gid", DownloadStatus::Complete),
+                download_item("error-gid", DownloadStatus::Error),
+            ],
+        );
+
+        assert_eq!(state.notification_intents().len(), 2);
+        assert_eq!(
+            state.notification_intents()[0].gid().as_str(),
+            "complete-gid"
+        );
+        assert_eq!(
+            state.notification_intents()[0].outcome(),
+            NotificationOutcome::Complete
+        );
+        assert_eq!(state.notification_intents()[1].gid().as_str(), "error-gid");
+        assert_eq!(
+            state.notification_intents()[1].outcome(),
+            NotificationOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn disabled_notification_preference_does_not_record_transitions() {
+        let mut state = State::initial();
+        connect(&mut state);
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Complete)],
+        );
+
+        assert!(state.notification_intents().is_empty());
     }
 
     #[test]

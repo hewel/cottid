@@ -119,6 +119,12 @@ pub struct PersistedConfig {
     selected_filter: String,
     auth_storage: AuthStorage,
     theme_preference: ThemePreference,
+    confirm_destructive_actions: bool,
+    notify_download_outcomes: bool,
+    new_download_directory: String,
+    new_download_output_filename: String,
+    new_download_max_download_limit: String,
+    new_download_max_upload_limit: String,
 }
 
 impl Default for PersistedConfig {
@@ -128,6 +134,12 @@ impl Default for PersistedConfig {
             selected_filter: "active".to_owned(),
             auth_storage: AuthStorage::None,
             theme_preference: ThemePreference::System,
+            confirm_destructive_actions: true,
+            notify_download_outcomes: false,
+            new_download_directory: String::new(),
+            new_download_output_filename: String::new(),
+            new_download_max_download_limit: String::new(),
+            new_download_max_upload_limit: String::new(),
         }
     }
 }
@@ -157,11 +169,44 @@ impl PersistedConfig {
             selected_filter: selected_filter.into(),
             auth_storage,
             theme_preference,
+            confirm_destructive_actions: true,
+            notify_download_outcomes: false,
+            new_download_directory: String::new(),
+            new_download_output_filename: String::new(),
+            new_download_max_download_limit: String::new(),
+            new_download_max_upload_limit: String::new(),
         }
     }
 
     fn with_theme_preference(mut self, theme_preference: ThemePreference) -> Self {
         self.theme_preference = theme_preference;
+        self
+    }
+
+    pub fn with_ui_preferences(
+        mut self,
+        confirm_destructive_actions: bool,
+        notify_download_outcomes: bool,
+    ) -> Self {
+        self.confirm_destructive_actions = confirm_destructive_actions;
+        self.notify_download_outcomes = notify_download_outcomes;
+        self
+    }
+
+    pub fn with_new_download_directory(mut self, directory: impl Into<String>) -> Self {
+        self.new_download_directory = directory.into();
+        self
+    }
+
+    pub fn with_new_download_defaults(
+        mut self,
+        output_filename: impl Into<String>,
+        max_download_limit: impl Into<String>,
+        max_upload_limit: impl Into<String>,
+    ) -> Self {
+        self.new_download_output_filename = output_filename.into();
+        self.new_download_max_download_limit = max_download_limit.into();
+        self.new_download_max_upload_limit = max_upload_limit.into();
         self
     }
 
@@ -179,6 +224,30 @@ impl PersistedConfig {
 
     pub fn theme_preference(&self) -> ThemePreference {
         self.theme_preference
+    }
+
+    pub fn confirm_destructive_actions(&self) -> bool {
+        self.confirm_destructive_actions
+    }
+
+    pub fn notify_download_outcomes(&self) -> bool {
+        self.notify_download_outcomes
+    }
+
+    pub fn new_download_directory(&self) -> &str {
+        &self.new_download_directory
+    }
+
+    pub fn new_download_output_filename(&self) -> &str {
+        &self.new_download_output_filename
+    }
+
+    pub fn new_download_max_download_limit(&self) -> &str {
+        &self.new_download_max_download_limit
+    }
+
+    pub fn new_download_max_upload_limit(&self) -> &str {
+        &self.new_download_max_upload_limit
     }
 }
 
@@ -513,9 +582,40 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
         .unwrap_or_else(|| "active".to_owned());
     let theme_preference = config
         .ui
+        .as_ref()
         .and_then(|ui| ui.theme)
         .map(Into::into)
         .unwrap_or(ThemePreference::System);
+    let confirm_destructive_actions = config
+        .ui
+        .as_ref()
+        .and_then(|ui| ui.confirm_destructive_actions)
+        .unwrap_or(true);
+    let notify_download_outcomes = config
+        .ui
+        .as_ref()
+        .and_then(|ui| ui.notify_download_outcomes)
+        .unwrap_or(false);
+    let new_download_directory = config
+        .new_download
+        .as_ref()
+        .and_then(|new_download| new_download.directory.clone())
+        .unwrap_or_default();
+    let new_download_output_filename = config
+        .new_download
+        .as_ref()
+        .and_then(|new_download| new_download.output_filename.clone())
+        .unwrap_or_default();
+    let new_download_max_download_limit = config
+        .new_download
+        .as_ref()
+        .and_then(|new_download| new_download.max_download_limit.clone())
+        .unwrap_or_default();
+    let new_download_max_upload_limit = config
+        .new_download
+        .as_ref()
+        .and_then(|new_download| new_download.max_upload_limit.clone())
+        .unwrap_or_default();
 
     Ok(ConfigLoad {
         config: PersistedConfig::with_auth_storage_and_theme(
@@ -523,6 +623,13 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
             selected_filter,
             auth_storage,
             theme_preference,
+        )
+        .with_ui_preferences(confirm_destructive_actions, notify_download_outcomes)
+        .with_new_download_directory(new_download_directory)
+        .with_new_download_defaults(
+            new_download_output_filename,
+            new_download_max_download_limit,
+            new_download_max_upload_limit,
         ),
         feedback,
     })
@@ -533,6 +640,12 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
     let mut polling_interval_seconds = None;
     let mut selected_filter = None;
     let mut theme_preference = None;
+    let mut confirm_destructive_actions = None;
+    let mut notify_download_outcomes = None;
+    let mut new_download_directory = None;
+    let mut new_download_output_filename = None;
+    let mut new_download_max_download_limit = None;
+    let mut new_download_max_upload_limit = None;
 
     for line in contents.lines() {
         let line = line.trim();
@@ -551,6 +664,22 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
             }
             "selected_filter" => selected_filter = Some(value.to_owned()),
             "theme" => theme_preference = ThemePreference::from_config_value(value),
+            "confirm_destructive_actions" => {
+                confirm_destructive_actions = parse_bool(value);
+            }
+            "notify_download_outcomes" => {
+                notify_download_outcomes = parse_bool(value);
+            }
+            "new_download_directory" => new_download_directory = Some(value.to_owned()),
+            "new_download_output_filename" => {
+                new_download_output_filename = Some(value.to_owned());
+            }
+            "new_download_max_download_limit" => {
+                new_download_max_download_limit = Some(value.to_owned());
+            }
+            "new_download_max_upload_limit" => {
+                new_download_max_upload_limit = Some(value.to_owned());
+            }
             "auth" if value == "session-only" || value == "none" => {}
             _ => {}
         }
@@ -568,7 +697,17 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
             selected_filter.unwrap_or_else(|| "active".to_owned()),
             AuthStorage::None,
         )
-        .with_theme_preference(theme_preference.unwrap_or(ThemePreference::System)),
+        .with_theme_preference(theme_preference.unwrap_or(ThemePreference::System))
+        .with_ui_preferences(
+            confirm_destructive_actions.unwrap_or(true),
+            notify_download_outcomes.unwrap_or(false),
+        )
+        .with_new_download_directory(new_download_directory.unwrap_or_default())
+        .with_new_download_defaults(
+            new_download_output_filename.unwrap_or_default(),
+            new_download_max_download_limit.unwrap_or_default(),
+            new_download_max_upload_limit.unwrap_or_default(),
+        ),
         feedback: None,
     })
 }
@@ -594,8 +733,32 @@ fn serialize_config(config: &PersistedConfig) -> Result<String, toml::ser::Error
         ui: Some(TomlUi {
             selected_filter: Some(config.selected_filter().to_owned()),
             theme: Some(config.theme_preference().into()),
+            confirm_destructive_actions: Some(config.confirm_destructive_actions()),
+            notify_download_outcomes: Some(config.notify_download_outcomes()),
+        }),
+        new_download: Some(TomlNewDownload {
+            directory: string_to_optional(config.new_download_directory()),
+            output_filename: string_to_optional(config.new_download_output_filename()),
+            max_download_limit: string_to_optional(config.new_download_max_download_limit()),
+            max_upload_limit: string_to_optional(config.new_download_max_upload_limit()),
         }),
     })
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn string_to_optional(value: &str) -> Option<String> {
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -789,6 +952,7 @@ struct TomlConfig {
     connection: Option<TomlConnection>,
     auth: Option<TomlAuth>,
     ui: Option<TomlUi>,
+    new_download: Option<TomlNewDownload>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -808,6 +972,20 @@ struct TomlAuth {
 struct TomlUi {
     selected_filter: Option<String>,
     theme: Option<TomlThemePreference>,
+    confirm_destructive_actions: Option<bool>,
+    notify_download_outcomes: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct TomlNewDownload {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_download_limit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_upload_limit: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

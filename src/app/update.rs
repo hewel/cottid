@@ -77,6 +77,24 @@ fn update_selection(state: &mut State, message: SelectionMessage) -> Task<Messag
 
 fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
     match message {
+        ActionMessage::ConfirmPending => {
+            let Some((generation, settings, action)) = state.confirm_pending_action() else {
+                return Task::none();
+            };
+            run_action_task(generation, settings, action)
+        }
+        ActionMessage::CancelPending => {
+            state.cancel_pending_action();
+            Task::none()
+        }
+        ActionMessage::Pause(_)
+        | ActionMessage::Unpause(_)
+        | ActionMessage::Remove(_)
+        | ActionMessage::PurgeStopped
+            if state.request_action_confirmation(message.clone()) =>
+        {
+            Task::none()
+        }
         ActionMessage::Pause(_)
         | ActionMessage::Unpause(_)
         | ActionMessage::Remove(_)
@@ -84,33 +102,7 @@ fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
             let Some((generation, settings, action)) = state.begin_action(message) else {
                 return Task::none();
             };
-            let target = action.target();
-
-            Task::perform(
-                async move {
-                    match action {
-                        RunningAction::Pause(gid) => {
-                            crate::aria2::client::pause(settings, gid).await.map(|_| ())
-                        }
-                        RunningAction::Unpause(gid) => crate::aria2::client::unpause(settings, gid)
-                            .await
-                            .map(|_| ()),
-                        RunningAction::Remove(gid) => crate::aria2::client::remove(settings, gid)
-                            .await
-                            .map(|_| ()),
-                        RunningAction::PurgeStopped => {
-                            crate::aria2::client::purge_stopped(settings).await
-                        }
-                    }
-                },
-                move |result| {
-                    Message::Action(ActionMessage::Finished {
-                        generation,
-                        target,
-                        result,
-                    })
-                },
-            )
+            run_action_task(generation, settings, action)
         }
         ActionMessage::Finished {
             generation,
@@ -124,6 +116,38 @@ fn update_action(state: &mut State, message: ActionMessage) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+fn run_action_task(
+    generation: u64,
+    settings: crate::config::Settings,
+    action: RunningAction,
+) -> Task<Message> {
+    let target = action.target();
+
+    Task::perform(
+        async move {
+            match action {
+                RunningAction::Pause(gid) => {
+                    crate::aria2::client::pause(settings, gid).await.map(|_| ())
+                }
+                RunningAction::Unpause(gid) => crate::aria2::client::unpause(settings, gid)
+                    .await
+                    .map(|_| ()),
+                RunningAction::Remove(gid) => crate::aria2::client::remove(settings, gid)
+                    .await
+                    .map(|_| ()),
+                RunningAction::PurgeStopped => crate::aria2::client::purge_stopped(settings).await,
+            }
+        },
+        move |result| {
+            Message::Action(ActionMessage::Finished {
+                generation,
+                target,
+                result,
+            })
+        },
+    )
 }
 
 fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
@@ -140,13 +164,25 @@ fn update_add(state: &mut State, message: AddMessage) -> Task<Message> {
             state.set_add_input(input);
             Task::none()
         }
+        AddMessage::OutputFilenameChanged(output_filename) => {
+            state.set_add_output_filename(output_filename);
+            Task::none()
+        }
+        AddMessage::MaxDownloadLimitChanged(limit) => {
+            state.set_add_max_download_limit(limit);
+            Task::none()
+        }
+        AddMessage::MaxUploadLimitChanged(limit) => {
+            state.set_add_max_upload_limit(limit);
+            Task::none()
+        }
         AddMessage::Submit => {
-            let Some((generation, settings, uri)) = state.begin_add_uri() else {
+            let Some((generation, settings, uri, options)) = state.begin_add_uri() else {
                 return Task::none();
             };
 
             Task::perform(
-                async move { crate::aria2::client::add_uri(settings, uri).await },
+                async move { crate::aria2::client::add_uri(settings, uri, options).await },
                 move |result| Message::Add(AddMessage::SubmitFinished { generation, result }),
             )
         }
@@ -168,14 +204,14 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
             settings,
             result,
         } => {
-            if state.finish_connection_test(generation, settings, result) {
+            if state.finish_connection_test(generation, settings.clone(), result) {
                 let Some((refresh_generation, refresh_settings, refresh_request)) =
                     state.begin_downloads_refresh()
                 else {
                     return Task::none();
                 };
 
-                return Task::perform(
+                let refresh_task = Task::perform(
                     async move {
                         crate::aria2::client::fetch_download_snapshot_with_request(
                             refresh_settings,
@@ -190,6 +226,26 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
                         })
                     },
                 );
+                let (runtime_generation, runtime_settings) =
+                    state.begin_runtime_global_options_fetch(settings);
+                let runtime_task = Task::perform(
+                    async move {
+                        let result = crate::aria2::client::get_runtime_global_options(
+                            runtime_settings.clone(),
+                        )
+                        .await;
+                        (runtime_settings, result)
+                    },
+                    move |(settings, result)| {
+                        Message::Settings(SettingsMessage::RuntimeGlobalOptionsFetched {
+                            generation: runtime_generation,
+                            settings,
+                            result,
+                        })
+                    },
+                );
+
+                return Task::batch([refresh_task, runtime_task]);
             }
 
             Task::none()
@@ -284,8 +340,27 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
             Task::none()
         }
         SettingsMessage::Save => {
-            state.save_settings();
-            Task::none()
+            let Some((generation, settings, options)) = state.save_settings() else {
+                return Task::none();
+            };
+
+            Task::perform(
+                async move {
+                    let result = crate::aria2::client::change_runtime_global_options(
+                        settings.clone(),
+                        options,
+                    )
+                    .await;
+                    (settings, result)
+                },
+                move |(settings, result)| {
+                    Message::Settings(SettingsMessage::RuntimeGlobalOptionsSaved {
+                        generation,
+                        settings,
+                        result,
+                    })
+                },
+            )
         }
         SettingsMessage::SavePlaintextFallback => {
             state.save_plaintext_fallback();
@@ -305,6 +380,58 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
         }
         SettingsMessage::PollingIntervalChanged(value) => {
             state.set_draft_polling_interval(value);
+            Task::none()
+        }
+        SettingsMessage::NewDownloadDirectoryChanged(directory) => {
+            state.set_draft_new_download_directory(directory);
+            Task::none()
+        }
+        SettingsMessage::NewDownloadOutputFilenameChanged(output_filename) => {
+            state.set_draft_new_download_output_filename(output_filename);
+            Task::none()
+        }
+        SettingsMessage::NewDownloadMaxDownloadLimitChanged(limit) => {
+            state.set_draft_new_download_max_download_limit(limit);
+            Task::none()
+        }
+        SettingsMessage::NewDownloadMaxUploadLimitChanged(limit) => {
+            state.set_draft_new_download_max_upload_limit(limit);
+            Task::none()
+        }
+        SettingsMessage::RuntimeMaxConcurrentDownloadsChanged(value) => {
+            state.set_draft_runtime_max_concurrent_downloads(value);
+            Task::none()
+        }
+        SettingsMessage::RuntimeMaxOverallDownloadLimitChanged(value) => {
+            state.set_draft_runtime_max_overall_download_limit(value);
+            Task::none()
+        }
+        SettingsMessage::RuntimeMaxOverallUploadLimitChanged(value) => {
+            state.set_draft_runtime_max_overall_upload_limit(value);
+            Task::none()
+        }
+        SettingsMessage::RuntimeGlobalOptionsFetched {
+            generation,
+            settings,
+            result,
+        } => {
+            state.apply_runtime_global_options(generation, settings, result);
+            Task::none()
+        }
+        SettingsMessage::RuntimeGlobalOptionsSaved {
+            generation,
+            settings,
+            result,
+        } => {
+            state.finish_runtime_global_options_save(generation, settings, result);
+            Task::none()
+        }
+        SettingsMessage::ConfirmDestructiveActionsChanged(enabled) => {
+            state.set_confirm_destructive_actions(enabled);
+            Task::none()
+        }
+        SettingsMessage::NotifyDownloadOutcomesChanged(enabled) => {
+            state.set_notify_download_outcomes(enabled);
             Task::none()
         }
     }

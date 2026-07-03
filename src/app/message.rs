@@ -2,6 +2,7 @@ use crate::app::state::DownloadFilter;
 use crate::aria2::client::ConnectionTest;
 use crate::aria2::domain::DownloadSnapshot;
 use crate::aria2::domain::Gid;
+use crate::aria2::domain::RuntimeGlobalOptions;
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::config::Settings;
@@ -13,6 +14,15 @@ pub const ADD_URI_INPUT_ID: &str = "add-uri-input";
 pub const SETTINGS_ENDPOINT_INPUT_ID: &str = "settings-endpoint-input";
 pub const SETTINGS_SECRET_INPUT_ID: &str = "settings-secret-input";
 pub const SETTINGS_POLLING_INTERVAL_INPUT_ID: &str = "settings-polling-interval-input";
+pub const SETTINGS_NEW_DOWNLOAD_DIRECTORY_INPUT_ID: &str = "settings-new-download-directory-input";
+pub const SETTINGS_NEW_DOWNLOAD_OUTPUT_INPUT_ID: &str = "settings-new-download-output-input";
+pub const SETTINGS_NEW_DOWNLOAD_DOWNLOAD_LIMIT_INPUT_ID: &str =
+    "settings-new-download-download-limit-input";
+pub const SETTINGS_NEW_DOWNLOAD_UPLOAD_LIMIT_INPUT_ID: &str =
+    "settings-new-download-upload-limit-input";
+pub const SETTINGS_RUNTIME_MAX_CONCURRENT_INPUT_ID: &str = "settings-runtime-max-concurrent-input";
+pub const SETTINGS_RUNTIME_DOWNLOAD_LIMIT_INPUT_ID: &str = "settings-runtime-download-limit-input";
+pub const SETTINGS_RUNTIME_UPLOAD_LIMIT_INPUT_ID: &str = "settings-runtime-upload-limit-input";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -37,6 +47,13 @@ pub enum TextInputFocusTarget {
     SettingsEndpoint,
     SettingsSecret,
     SettingsPollingInterval,
+    SettingsNewDownloadDirectory,
+    SettingsNewDownloadOutput,
+    SettingsNewDownloadDownloadLimit,
+    SettingsNewDownloadUploadLimit,
+    SettingsRuntimeMaxConcurrent,
+    SettingsRuntimeDownloadLimit,
+    SettingsRuntimeUploadLimit,
 }
 
 impl TextInputFocusTarget {
@@ -50,6 +67,13 @@ impl TextInputFocusTarget {
             Self::SettingsEndpoint => SETTINGS_ENDPOINT_INPUT_ID,
             Self::SettingsSecret => SETTINGS_SECRET_INPUT_ID,
             Self::SettingsPollingInterval => SETTINGS_POLLING_INTERVAL_INPUT_ID,
+            Self::SettingsNewDownloadDirectory => SETTINGS_NEW_DOWNLOAD_DIRECTORY_INPUT_ID,
+            Self::SettingsNewDownloadOutput => SETTINGS_NEW_DOWNLOAD_OUTPUT_INPUT_ID,
+            Self::SettingsNewDownloadDownloadLimit => SETTINGS_NEW_DOWNLOAD_DOWNLOAD_LIMIT_INPUT_ID,
+            Self::SettingsNewDownloadUploadLimit => SETTINGS_NEW_DOWNLOAD_UPLOAD_LIMIT_INPUT_ID,
+            Self::SettingsRuntimeMaxConcurrent => SETTINGS_RUNTIME_MAX_CONCURRENT_INPUT_ID,
+            Self::SettingsRuntimeDownloadLimit => SETTINGS_RUNTIME_DOWNLOAD_LIMIT_INPUT_ID,
+            Self::SettingsRuntimeUploadLimit => SETTINGS_RUNTIME_UPLOAD_LIMIT_INPUT_ID,
         }
     }
 }
@@ -66,6 +90,8 @@ pub enum ActionMessage {
     Unpause(Gid),
     Remove(Gid),
     PurgeStopped,
+    ConfirmPending,
+    CancelPending,
     Finished {
         generation: u64,
         target: ActionTarget,
@@ -84,6 +110,9 @@ pub enum AddMessage {
     Open,
     Cancel,
     InputChanged(String),
+    OutputFilenameChanged(String),
+    MaxDownloadLimitChanged(String),
+    MaxUploadLimitChanged(String),
     Submit,
     SubmitFinished {
         generation: u64,
@@ -141,4 +170,23 @@ pub enum SettingsMessage {
     EndpointChanged(String),
     SecretChanged(String),
     PollingIntervalChanged(String),
+    NewDownloadDirectoryChanged(String),
+    NewDownloadOutputFilenameChanged(String),
+    NewDownloadMaxDownloadLimitChanged(String),
+    NewDownloadMaxUploadLimitChanged(String),
+    RuntimeMaxConcurrentDownloadsChanged(String),
+    RuntimeMaxOverallDownloadLimitChanged(String),
+    RuntimeMaxOverallUploadLimitChanged(String),
+    RuntimeGlobalOptionsFetched {
+        generation: u64,
+        settings: Settings,
+        result: Result<RuntimeGlobalOptions, ClientError>,
+    },
+    RuntimeGlobalOptionsSaved {
+        generation: u64,
+        settings: Settings,
+        result: Result<(), ClientError>,
+    },
+    ConfirmDestructiveActionsChanged(bool),
+    NotifyDownloadOutcomesChanged(bool),
 }
