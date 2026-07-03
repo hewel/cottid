@@ -3,7 +3,7 @@ use std::time::Duration;
 use iced::widget::{column, container, mouse_area, row, text, text_input, tooltip};
 use iced::{Alignment, Background, Border, Color, Element, Length, Theme};
 
-use crate::ui::icons::{Icon, icon_for};
+use crate::ui::icons::{Icon, icon};
 use crate::ui::overlay::style as overlay_style;
 use crate::ui::tokens::{TOKENS, mode_from_theme};
 
@@ -85,11 +85,7 @@ pub(crate) fn field<'a, Message: Clone + 'a>(
     let control = control.into();
 
     if let Some(status) = options.status {
-        let status_box = field_status_box(
-            status.kind,
-            status.message,
-            options.is_disabled,
-        );
+        let status_box = field_status_box(status.kind, status.message, options.is_disabled);
 
         if matches!(status.variant, FieldStatusVariant::Attached) {
             content = content.push(column![control, status_box].spacing(0).width(Length::Fill));
@@ -206,7 +202,7 @@ fn label_tooltip_icon<'a, Message: 'a>(
     tooltip_text: &'a str,
     is_disabled: bool,
 ) -> Element<'a, Message> {
-    let trigger = container(icon_for(Icon::Info, 16, move |theme| {
+    let trigger = container(icon(Icon::Info, 16.0, move |theme| {
         field_text_color(theme, is_disabled)
     }))
     .padding([0, 4]);

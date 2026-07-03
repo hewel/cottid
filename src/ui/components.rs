@@ -90,7 +90,7 @@ pub(crate) fn search_surface<'a>(
 }
 
 pub(crate) fn icon_button(icon_kind: Icon, message: Message) -> button::Button<'static, Message> {
-    button(icon(icon_kind, 18, theme::text_color))
+    button(icon(icon_kind, 18.0, theme::text_color))
         .padding(10)
         .style(theme::icon_button)
         .on_press(message)
@@ -112,7 +112,7 @@ pub(crate) fn action_button(
         theme::icon_button
     };
 
-    button(icon(icon_kind, 16, color))
+    button(icon(icon_kind, 16.0, color))
         .style(style)
         .padding(10)
         .on_press(message)
@@ -217,7 +217,7 @@ fn transfer_speed_item(
         label
     };
 
-    row![icon(icon_kind, 12, color), label,]
+    row![icon(icon_kind, 12.0, color), label,]
         .spacing(4)
         .align_y(Alignment::Center)
         .into()
@@ -245,7 +245,7 @@ pub(crate) fn feedback_banner(tone: FeedbackTone, message: &str) -> Element<'sta
 
     surface(
         row![
-            icon(icon_kind, 16, color),
+            icon(icon_kind, 16.0, color),
             text(message.to_owned()).size(12),
         ]
         .spacing(8)

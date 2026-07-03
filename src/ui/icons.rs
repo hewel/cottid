@@ -92,22 +92,14 @@ impl From<FileIcon> for Icon {
     }
 }
 
-pub fn icon<Message: 'static>(
-    icon: Icon,
-    size: u16,
-    color: fn(&Theme) -> Color,
-) -> Element<'static, Message> {
-    icon_for(icon, size, color)
-}
-
-pub(crate) fn icon_for<'a, Message: 'a>(
-    icon: Icon,
-    size: u16,
-    color: impl Fn(&Theme) -> Color + 'a,
-) -> Element<'a, Message> {
+pub fn icon<'a, Message, ColorFn>(icon: Icon, size: f32, color: ColorFn) -> Element<'a, Message>
+where
+    Message: 'a,
+    ColorFn: Fn(&Theme) -> Color + 'a,
+{
     svg::Svg::from_path(format!("{ICON_ROOT}/{}", icon.file_name()))
-        .width(Length::Fixed(f32::from(size)))
-        .height(Length::Fixed(f32::from(size)))
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
         .style(move |theme, _status| svg::Style {
             color: Some(color(theme)),
         })

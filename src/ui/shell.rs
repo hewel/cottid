@@ -20,7 +20,7 @@ use crate::ui::widgets::field::{
 };
 
 const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
-const THEME_BUTTON_SIZE: f32 = 40.0;
+const THEME_BUTTON_SIZE: f32 = TOKENS.spacing.s5 * 2.0;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
@@ -175,7 +175,7 @@ fn theme_icon_button(
 
 fn theme_icon_control(icon_kind: Icon, selected: bool) -> button::Button<'static, Message> {
     ui::toggle_button(
-        container(icon(icon_kind, 20, theme::text_color)).center(Length::Fill),
+        container(icon(icon_kind, TOKENS.spacing.s5, theme::text_color)).center(Length::Fill),
         selected,
     )
     .padding(0)
@@ -265,14 +265,14 @@ fn filter_button(
 ) -> Element<'static, Message> {
     let content = if let Some(label) = label {
         row![
-            icon(icon_kind, 18, theme::text_color),
+            icon(icon_kind, 18.0, theme::text_color),
             text(label).size(14).width(Length::Fill),
             ui::badge(count.to_string(), BadgeVariant::Neutral),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
     } else {
-        row![icon(icon_kind, 18, theme::text_color)]
+        row![icon(icon_kind, 18.0, theme::text_color)]
             .align_y(Alignment::Center)
             .width(Length::Fill)
     };

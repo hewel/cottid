@@ -91,7 +91,7 @@ fn stale_banner(state: &State) -> Element<'_, Message> {
 
     ui::muted_panel(
         row![
-            icon(Icon::Error, 18, theme::warning_color),
+            icon(Icon::Error, 18.0, theme::warning_color),
             text(format!("Showing last successful refresh. {message}")).size(13),
         ]
         .spacing(8)
@@ -105,7 +105,7 @@ fn stale_banner(state: &State) -> Element<'_, Message> {
 fn empty_state(message: String) -> Element<'static, Message> {
     ui::card_surface(
         column![
-            icon(Icon::File, 28, theme::muted_color),
+            icon(Icon::File, 28.0, theme::muted_color),
             text(message).size(14).style(theme::muted_text),
         ]
         .spacing(8)
@@ -150,7 +150,8 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
 
     let mut card_body = column![
         row![
-            ui::muted_panel(icon(Icon::from(row.file_icon()), 24, theme::accent_color)).padding(12),
+            ui::muted_panel(icon(Icon::from(row.file_icon()), 24.0, theme::accent_color))
+                .padding(12),
             column![
                 text(row.name().to_owned()).size(17),
                 text(row.metadata().to_owned())
@@ -177,7 +178,7 @@ fn download_card(row: DownloadRowView) -> Element<'static, Message> {
     if let Some(error) = row.error() {
         card_body = card_body.push(
             row![
-                icon(Icon::Error, 16, theme::danger_color),
+                icon(Icon::Error, 16.0, theme::danger_color),
                 text(error.to_owned()).size(12).style(theme::danger_text)
             ]
             .spacing(6)
@@ -238,7 +239,7 @@ fn detail_content(
         row![
             ui::muted_panel(icon(
                 Icon::from(detail.file_icon()),
-                32,
+                32.0,
                 theme::accent_color
             ))
             .padding(16),
@@ -282,7 +283,7 @@ fn detail_content(
     if let Some(error) = detail.error() {
         content = content.push(
             row![
-                icon(Icon::Error, 16, theme::danger_color),
+                icon(Icon::Error, 16.0, theme::danger_color),
                 text(error.to_owned()).size(12).style(theme::danger_text)
             ]
             .spacing(6)

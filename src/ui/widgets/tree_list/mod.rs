@@ -304,7 +304,7 @@ fn chevron_icon(
         style::chevron_icon_color
     };
 
-    container(icon(icon_kind, 14, icon_color))
+    container(icon(icon_kind, 14.0, icon_color))
         .width(Length::Fixed(metrics.chevron_width))
         .padding([4, 0])
         .into()
