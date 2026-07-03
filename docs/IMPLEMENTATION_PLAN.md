@@ -73,6 +73,11 @@ Do not include: daemon config, database, multi-profile UI.
 
 Architecture check: secret handling policy is explicit and documented.
 
+Settings migration decisions from AriaNg are tracked in
+`docs/SETTINGS_MIGRATION.md`; use that document to choose future app, RPC,
+aria2 global, and task-default settings deliberately instead of copying AriaNg's
+full settings surface.
+
 ### 4. Aria2 JSON-RPC Client Abstraction
 
 Goal: introduce transport abstraction, JSON-RPC envelopes, typed method
