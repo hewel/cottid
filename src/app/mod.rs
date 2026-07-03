@@ -516,6 +516,50 @@ mod tests {
     }
 
     #[test]
+    fn toolbar_theme_preference_applies_and_persists_immediately() {
+        let path = temp_config_path("toolbar-theme");
+        let mut state = State::load_from_path(path.clone());
+
+        let _task = super::update(
+            &mut state,
+            Message::Toolbar(ToolbarMessage::ThemePreferenceSelected(
+                ThemePreference::Dark,
+            )),
+        );
+
+        let contents = fs::read_to_string(&path).expect("config written");
+        let reloaded = State::load_from_path(path);
+
+        assert_eq!(state.theme_preference(), ThemePreference::Dark);
+        assert_eq!(state.draft_theme_preference(), ThemePreference::Dark);
+        assert!(contents.contains("theme = \"dark\""));
+        assert_eq!(reloaded.theme_preference(), ThemePreference::Dark);
+    }
+
+    #[test]
+    fn toolbar_theme_cycle_walks_system_light_dark() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Toolbar(ToolbarMessage::CycleThemePreference),
+        );
+        assert_eq!(state.theme_preference(), ThemePreference::Light);
+
+        let _task = super::update(
+            &mut state,
+            Message::Toolbar(ToolbarMessage::CycleThemePreference),
+        );
+        assert_eq!(state.theme_preference(), ThemePreference::Dark);
+
+        let _task = super::update(
+            &mut state,
+            Message::Toolbar(ToolbarMessage::CycleThemePreference),
+        );
+        assert_eq!(state.theme_preference(), ThemePreference::System);
+    }
+
+    #[test]
     fn system_theme_preference_defers_to_iced_system_theme() {
         let mut state = State::initial();
 

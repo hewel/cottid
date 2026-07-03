@@ -12,7 +12,7 @@ use crate::aria2::notifications::Aria2Notification;
 use crate::config::{
     AuthStorage, ConfigLoad, PersistedConfig, RpcAuthDraft, Settings, SettingsDraft,
     SystemTokenStore, ThemePreference, default_config_path, load_config,
-    save_config_with_token_store,
+    save_config_with_token_store, save_config_without_token_store,
 };
 use crate::ui::overlay::{PopoverId, PopoverState};
 use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
@@ -888,6 +888,16 @@ impl State {
         self.persist_config(None, None);
     }
 
+    pub(super) fn set_theme_preference(&mut self, theme_preference: ThemePreference) {
+        self.settings.theme_preference = theme_preference;
+        self.settings.draft_theme_preference = theme_preference;
+        self.persist_ui_preferences();
+    }
+
+    pub(super) fn cycle_theme_preference(&mut self) {
+        self.set_theme_preference(self.settings.theme_preference.next());
+    }
+
     pub(super) fn select_download(&mut self, gid: Gid) -> bool {
         if self.downloads.items_by_gid.contains_key(&gid) {
             if self.selection.selected_gid.as_ref() != Some(&gid) {
@@ -1331,6 +1341,24 @@ impl State {
                 return false;
             }
 
+            self.settings.feedback = Some(FormFeedback::error(error.message()));
+            return false;
+        }
+
+        true
+    }
+
+    fn persist_ui_preferences(&mut self) -> bool {
+        let config = PersistedConfig::with_auth_storage_and_theme(
+            self.settings.applied.clone(),
+            self.downloads.filter.config_value(),
+            self.settings.auth_storage,
+            self.settings.theme_preference,
+        );
+
+        if let Some(path) = self.settings.config_path.as_ref()
+            && let Err(error) = save_config_without_token_store(path, &config)
+        {
             self.settings.feedback = Some(FormFeedback::error(error.message()));
             return false;
         }

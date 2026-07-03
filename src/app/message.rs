@@ -129,6 +129,8 @@ pub enum RefreshInvalidation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolbarMessage {
     OpenSettings,
+    ThemePreferenceSelected(ThemePreference),
+    CycleThemePreference,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

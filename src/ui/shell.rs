@@ -2,8 +2,8 @@ use iced::widget::{button, column, container, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 
 use crate::app::{
-    ActionMessage, AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message,
-    SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
+    AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message, SettingsMessage,
+    State, TextInputFocusTarget, ToolbarMessage,
 };
 use crate::config::{RpcAuthDraft, ThemePreference};
 use crate::ui::components as ui;
@@ -85,13 +85,6 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
         .spacing(4)
     };
 
-    let purge = nav_button(
-        Icon::Purge,
-        if compact { "" } else { "Clear results" },
-        state.can_purge_stopped(),
-        || Message::Action(ActionMessage::PurgeStopped),
-    );
-
     let mut filters = column![].spacing(6);
     for filter in crate::app::DownloadFilter::VISIBLE {
         let selected = filter == state.selected_filter();
@@ -106,7 +99,7 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
 
     let main_content = column![
         title,
-        column![purge].spacing(8),
+        theme_switcher(state, compact),
         text(if compact { "State" } else { "Download state" })
             .size(12)
             .style(theme::muted_text),
@@ -133,28 +126,64 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
         .height(Length::Fill)
 }
 
-fn nav_button(
-    icon_kind: Icon,
-    label: &'static str,
-    enabled: bool,
-    message: impl FnOnce() -> Message,
-) -> button::Button<'static, Message> {
-    let content = if label.is_empty() {
-        row![icon(icon_kind, 18, theme::text_color)].align_y(Alignment::Center)
-    } else {
-        row![icon(icon_kind, 18, theme::text_color), text(label).size(14)]
-            .spacing(8)
-            .align_y(Alignment::Center)
-    };
-    let button = button(content)
-        .padding([10, 12])
-        .width(Length::Fill)
-        .style(theme::subtle_button);
+fn theme_switcher(state: &State, compact: bool) -> Element<'static, Message> {
+    let selected = state.theme_preference();
 
-    if enabled {
-        button.on_press(message())
-    } else {
-        button
+    if compact {
+        return app_tooltip(
+            compact_theme_cycle_button(selected),
+            format!(
+                "Theme: {}. Switch to {}",
+                selected.label(),
+                selected.next().label()
+            ),
+            TooltipOptions::default(),
+        );
+    }
+
+    let mut controls = row![].spacing(6).width(Length::Fill);
+    for preference in ThemePreference::ALL {
+        controls = controls.push(theme_icon_button(preference, selected));
+    }
+
+    controls.into()
+}
+
+fn compact_theme_cycle_button(selected: ThemePreference) -> button::Button<'static, Message> {
+    theme_icon_control(theme_icon(selected), true)
+        .on_press(Message::Toolbar(ToolbarMessage::CycleThemePreference))
+}
+
+fn theme_icon_button(
+    preference: ThemePreference,
+    selected: ThemePreference,
+) -> Element<'static, Message> {
+    let label = format!("{} theme", preference.label());
+    app_tooltip(
+        theme_icon_control(theme_icon(preference), preference == selected).on_press(
+            Message::Toolbar(ToolbarMessage::ThemePreferenceSelected(preference)),
+        ),
+        label,
+        TooltipOptions::default(),
+    )
+}
+
+fn theme_icon_control(icon_kind: Icon, selected: bool) -> button::Button<'static, Message> {
+    ui::toggle_button(
+        row![icon(icon_kind, 18, theme::text_color)]
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+        selected,
+    )
+    .padding([10, 8])
+    .width(Length::Fill)
+}
+
+fn theme_icon(preference: ThemePreference) -> Icon {
+    match preference {
+        ThemePreference::System => Icon::SystemTheme,
+        ThemePreference::Light => Icon::Sun,
+        ThemePreference::Dark => Icon::Moon,
     }
 }
 
@@ -453,13 +482,13 @@ fn theme_row(selected: ThemePreference) -> Element<'static, Message> {
     let mut row = row![].spacing(8);
 
     for preference in ThemePreference::ALL {
-        row = row.push(theme_button(preference, selected));
+        row = row.push(settings_theme_button(preference, selected));
     }
 
     row.into()
 }
 
-fn theme_button(
+fn settings_theme_button(
     preference: ThemePreference,
     selected: ThemePreference,
 ) -> button::Button<'static, Message> {

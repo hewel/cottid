@@ -95,6 +95,14 @@ impl ThemePreference {
         }
     }
 
+    pub fn next(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+
     pub fn from_config_value(value: &str) -> Option<Self> {
         match value {
             "system" => Some(Self::System),
@@ -396,7 +404,29 @@ pub fn save_config_with_token_store(
     token_store: &dyn TokenStore,
 ) -> Result<(), ConfigSaveError> {
     persist_secret(config, token_store)?;
+    write_config_file(path, config)?;
 
+    if let Some(previous_endpoint) = previous_endpoint
+        && previous_endpoint != config.settings().endpoint()
+    {
+        token_store
+            .delete(previous_endpoint)
+            .map_err(|source| ConfigSaveError {
+                kind: ConfigSaveErrorKind::TokenStore(source),
+            })?;
+    }
+
+    Ok(())
+}
+
+pub fn save_config_without_token_store(
+    path: &Path,
+    config: &PersistedConfig,
+) -> Result<(), ConfigSaveError> {
+    write_config_file(path, config)
+}
+
+fn write_config_file(path: &Path, config: &PersistedConfig) -> Result<(), ConfigSaveError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| ConfigSaveError {
             kind: ConfigSaveErrorKind::Io(source),
@@ -411,19 +441,7 @@ pub fn save_config_with_token_store(
     )
     .map_err(|source| ConfigSaveError {
         kind: ConfigSaveErrorKind::Io(source),
-    })?;
-
-    if let Some(previous_endpoint) = previous_endpoint
-        && previous_endpoint != config.settings().endpoint()
-    {
-        token_store
-            .delete(previous_endpoint)
-            .map_err(|source| ConfigSaveError {
-                kind: ConfigSaveErrorKind::TokenStore(source),
-            })?;
-    }
-
-    Ok(())
+    })
 }
 
 fn persist_secret(
@@ -889,6 +907,7 @@ mod tests {
         AuthStorage, EndpointValidationError, PersistedConfig, RpcAuth, RpcAuthDraft, Secret,
         Settings, SettingsDraft, SettingsDraftError, ThemePreference, TokenStore, TokenStoreError,
         load_config_with_token_store, save_config_with_token_store,
+        save_config_without_token_store,
     };
 
     #[test]
@@ -1014,6 +1033,29 @@ mod tests {
 
         assert!(contents.contains("theme = \"dark\""));
         assert_eq!(loaded.config().theme_preference(), ThemePreference::Dark);
+    }
+
+    #[test]
+    fn tokenless_save_writes_ui_preferences_without_touching_keyring() {
+        let path = temp_config_path("theme-no-token-store");
+        let settings = Settings::new(
+            "http://aria2.local:6800/jsonrpc",
+            RpcAuth::SessionSecret(Secret::session("super-secret")),
+            3,
+        )
+        .expect("settings");
+        let config = PersistedConfig::with_auth_storage_and_theme(
+            settings,
+            "active",
+            AuthStorage::Keyring,
+            ThemePreference::Light,
+        );
+
+        save_config_without_token_store(&path, &config).expect("config saves without keyring");
+        let contents = fs::read_to_string(&path).expect("config file");
+
+        assert!(contents.contains("theme = \"light\""));
+        assert!(!contents.contains("super-secret"));
     }
 
     #[test]

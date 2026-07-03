@@ -266,6 +266,14 @@ fn update_toolbar(state: &mut State, message: ToolbarMessage) -> Task<Message> {
             state.open_settings();
             Task::none()
         }
+        ToolbarMessage::ThemePreferenceSelected(theme_preference) => {
+            state.set_theme_preference(theme_preference);
+            Task::none()
+        }
+        ToolbarMessage::CycleThemePreference => {
+            state.cycle_theme_preference();
+            Task::none()
+        }
     }
 }
 

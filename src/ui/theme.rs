@@ -122,10 +122,6 @@ pub fn danger_text(theme: &Theme) -> text::Style {
     }
 }
 
-pub fn subtle_button(theme: &Theme, status: button::Status) -> button::Style {
-    button_variant(theme, status, ButtonVariant::Secondary)
-}
-
 pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     button_variant(theme, status, ButtonVariant::Ghost)
 }
