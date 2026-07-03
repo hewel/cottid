@@ -13,14 +13,12 @@ use crate::ui::overlay::{
     app_popover, app_tooltip, app_tooltip_element,
 };
 use crate::ui::theme;
-use crate::ui::tokens::TOKENS;
 use crate::ui::variants::{BadgeVariant, ButtonVariant};
 use crate::ui::widgets::field::{
     FieldOptions, FieldStatus, FieldStatusKind, FieldStatusVariant, Requiredness, text_field,
 };
 
 const CONNECTION_DETAIL_POPOVER: PopoverId = PopoverId(1);
-const THEME_BUTTON_SIZE: f32 = TOKENS.spacing.s5 * 2.0;
 
 pub fn view(state: &State) -> Element<'_, Message> {
     let sidebar_width = if state.is_compact_layout() {
@@ -101,7 +99,6 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
 
     let main_content = column![
         title,
-        theme_switcher(state, compact),
         text(if compact { "State" } else { "Download state" })
             .size(12)
             .style(theme::muted_text),
@@ -111,9 +108,9 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
     .width(Length::Fill);
 
     let bottom_content = column![
-        row![connection_detail_popover(state), settings_icon_button()]
-            .spacing(8)
-            .width(Length::Fill)
+        theme_switcher(state),
+        row![connection_detail_popover(state)].width(Length::Fill),
+        row![settings_icon_button()].width(Length::Fill),
     ]
     .spacing(10)
     .width(Length::Fill);
@@ -128,59 +125,29 @@ fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
         .height(Length::Fill)
 }
 
-fn theme_switcher(state: &State, compact: bool) -> Element<'static, Message> {
+fn theme_switcher(state: &State) -> Element<'static, Message> {
     let selected = state.theme_preference();
 
-    if compact {
-        return app_tooltip(
-            compact_theme_cycle_button(selected),
-            format!(
-                "Theme: {}. Switch to {}",
-                selected.label(),
-                selected.next().label()
-            ),
-            TooltipOptions::default(),
-        );
-    }
-
-    let mut controls = row![].spacing(TOKENS.spacing.s1).align_y(Alignment::Center);
-    for preference in ThemePreference::ALL {
-        controls = controls.push(theme_icon_button(preference, selected));
-    }
-
-    container(controls)
-        .width(Length::Fill)
-        .align_x(Alignment::Start)
-        .into()
-}
-
-fn compact_theme_cycle_button(selected: ThemePreference) -> button::Button<'static, Message> {
-    theme_icon_control(theme_icon(selected), true)
-        .on_press(Message::Toolbar(ToolbarMessage::CycleThemePreference))
-}
-
-fn theme_icon_button(
-    preference: ThemePreference,
-    selected: ThemePreference,
-) -> Element<'static, Message> {
-    let label = format!("{} theme", preference.label());
     app_tooltip(
-        theme_icon_control(theme_icon(preference), preference == selected).on_press(
-            Message::Toolbar(ToolbarMessage::ThemePreferenceSelected(preference)),
+        compact_theme_cycle_button(selected),
+        format!(
+            "Theme: {}. Switch to {}",
+            selected.label(),
+            selected.next().label()
         ),
-        label,
         TooltipOptions::default(),
     )
 }
 
-fn theme_icon_control(icon_kind: Icon, selected: bool) -> button::Button<'static, Message> {
-    ui::toggle_button(
-        container(icon(icon_kind, TOKENS.spacing.s5, theme::text_color)).center(Length::Fill),
-        selected,
+fn compact_theme_cycle_button(selected: ThemePreference) -> button::Button<'static, Message> {
+    theme_icon_control(theme_icon(selected))
+}
+
+fn theme_icon_control(icon_kind: Icon) -> button::Button<'static, Message> {
+    ui::icon_button(
+        icon_kind,
+        Message::Toolbar(ToolbarMessage::CycleThemePreference),
     )
-    .padding(0)
-    .width(Length::Fixed(THEME_BUTTON_SIZE))
-    .height(Length::Fixed(THEME_BUTTON_SIZE))
 }
 
 fn theme_icon(preference: ThemePreference) -> Icon {
