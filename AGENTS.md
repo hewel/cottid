@@ -16,6 +16,7 @@ server.
 - **Type Conversion:** Model aria2 GIDs and numeric string fields as typed domain data (e.g., parse raw numeric string fields during domain conversion, not in views) before they reach app or UI state.
 - **Pure Views:** Never call RPC or perform side-effects from view functions or UI widgets.
 - **No Per-Row RPC:** Never issue one RPC request per visible row. Keep expensive formatting and derived display data out of hot view paths.
+- **Design Tokens:** Prefer `TOKENS` and UI component/style wrappers for visual spacing, sizing, radius, typography, colors, shadows, and border widths. Use raw numeric literals only when no token exists or the value is an external/API/layout constraint; add a token first when a visual value is reused.
 
 ## Realtime Updates & Scheduler
 

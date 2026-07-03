@@ -32,6 +32,14 @@ View modules should prefer component wrappers for repeated app controls such as
 cards, feedback banners, text buttons, icon buttons, and form inputs. Direct
 `iced` widgets remain fine for one-off layout composition.
 
+For visual constants, prefer existing design tokens and semantic wrappers over
+raw numeric literals. Use `TOKENS.spacing`, `TOKENS.radius`,
+`TOKENS.typography`, semantic variants, and component helpers when expressing
+spacing, sizing, border widths, colors, shadows, and text sizes. Raw numbers are
+acceptable for external constraints, protocol/API values, or one-off layout
+limits with no matching token. If a visual value is reused, add it to
+`src/ui/tokens.rs` instead of scattering literals through view code.
+
 The token names are semantic, not CSS names. External CSS theme systems can
 inform the palette and variant vocabulary, but Rust views should depend on the
 local tokens and variants only.
