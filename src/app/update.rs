@@ -402,6 +402,10 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
             state.keep_secret_session_only();
             Task::none()
         }
+        SettingsMessage::DaemonModeChanged(daemon_mode) => {
+            state.set_draft_daemon_mode(daemon_mode);
+            Task::none()
+        }
         SettingsMessage::EndpointChanged(endpoint) => {
             state.set_draft_endpoint(endpoint);
             Task::none()

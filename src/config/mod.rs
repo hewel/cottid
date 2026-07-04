@@ -12,6 +12,21 @@ const DEFAULT_POLLING_INTERVAL_SECONDS: u16 = 2;
 #[cfg(not(test))]
 const KEYRING_SERVICE: &str = "cottid";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonMode {
+    Managed,
+    External,
+}
+
+impl DaemonMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Managed => "Managed",
+            Self::External => "External",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     endpoint: String,
@@ -123,6 +138,7 @@ impl ThemePreference {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedConfig {
+    daemon_mode: DaemonMode,
     settings: Settings,
     selected_filter: String,
     auth_storage: AuthStorage,
@@ -138,6 +154,7 @@ pub struct PersistedConfig {
 impl Default for PersistedConfig {
     fn default() -> Self {
         Self {
+            daemon_mode: DaemonMode::Managed,
             settings: Settings::default(),
             selected_filter: "active".to_owned(),
             auth_storage: AuthStorage::None,
@@ -173,6 +190,7 @@ impl PersistedConfig {
         theme_preference: ThemePreference,
     ) -> Self {
         Self {
+            daemon_mode: DaemonMode::External,
             settings,
             selected_filter: selected_filter.into(),
             auth_storage,
@@ -184,6 +202,11 @@ impl PersistedConfig {
             new_download_max_download_limit: String::new(),
             new_download_max_upload_limit: String::new(),
         }
+    }
+
+    pub fn with_daemon_mode(mut self, daemon_mode: DaemonMode) -> Self {
+        self.daemon_mode = daemon_mode;
+        self
     }
 
     fn with_theme_preference(mut self, theme_preference: ThemePreference) -> Self {
@@ -220,6 +243,10 @@ impl PersistedConfig {
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    pub fn daemon_mode(&self) -> DaemonMode {
+        self.daemon_mode
     }
 
     pub fn selected_filter(&self) -> &str {
@@ -554,6 +581,11 @@ fn parse_config(contents: &str, token_store: &dyn TokenStore) -> Result<ConfigLo
 
 fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<ConfigLoad, ()> {
     let connection = config.connection.ok_or(())?;
+    let daemon_mode = config
+        .daemon
+        .and_then(|daemon| daemon.mode)
+        .map(Into::into)
+        .unwrap_or(DaemonMode::External);
     let endpoint = connection
         .endpoint
         .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned());
@@ -639,6 +671,7 @@ fn config_from_toml(config: TomlConfig, token_store: &dyn TokenStore) -> Result<
             auth_storage,
             theme_preference,
         )
+        .with_daemon_mode(daemon_mode)
         .with_ui_preferences(confirm_destructive_actions, notify_download_outcomes)
         .with_new_download_directory(new_download_directory)
         .with_new_download_defaults(
@@ -718,6 +751,7 @@ fn config_from_legacy(contents: &str) -> Result<ConfigLoad, ()> {
             selected_filter.unwrap_or_else(|| "active".to_owned()),
             AuthStorage::None,
         )
+        .with_daemon_mode(DaemonMode::External)
         .with_theme_preference(theme_preference.unwrap_or(ThemePreference::System))
         .with_ui_preferences(
             confirm_destructive_actions.unwrap_or(true),
@@ -743,6 +777,9 @@ fn serialize_config(config: &PersistedConfig) -> Result<String, toml::ser::Error
 
     toml::to_string_pretty(&TomlConfig {
         version: Some(1),
+        daemon: Some(TomlDaemon {
+            mode: Some(config.daemon_mode().into()),
+        }),
         connection: Some(TomlConnection {
             endpoint: Some(config.settings().endpoint().to_owned()),
             polling_interval_seconds: Some(config.settings().polling_interval_seconds()),
@@ -983,10 +1020,16 @@ fn validate_endpoint(endpoint: &str) -> Result<(), EndpointValidationError> {
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct TomlConfig {
     version: Option<u16>,
+    daemon: Option<TomlDaemon>,
     connection: Option<TomlConnection>,
     auth: Option<TomlAuth>,
     ui: Option<TomlUi>,
     new_download: Option<TomlNewDownload>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct TomlDaemon {
+    mode: Option<TomlDaemonMode>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -1021,6 +1064,31 @@ struct TomlNewDownload {
     max_download_limit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_upload_limit: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum TomlDaemonMode {
+    Managed,
+    External,
+}
+
+impl From<TomlDaemonMode> for DaemonMode {
+    fn from(value: TomlDaemonMode) -> Self {
+        match value {
+            TomlDaemonMode::Managed => Self::Managed,
+            TomlDaemonMode::External => Self::External,
+        }
+    }
+}
+
+impl From<DaemonMode> for TomlDaemonMode {
+    fn from(value: DaemonMode) -> Self {
+        match value {
+            DaemonMode::Managed => Self::Managed,
+            DaemonMode::External => Self::External,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -1090,13 +1158,21 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        AuthStorage, EndpointValidationError, PersistedConfig, RpcAuth, Secret, Settings,
-        SettingsDraft, ThemePreference, TokenStore, TokenStoreError, load_config_with_token_store,
-        save_config_with_token_store, save_config_without_token_store,
+        AuthStorage, DaemonMode, EndpointValidationError, PersistedConfig, RpcAuth, Secret,
+        Settings, SettingsDraft, ThemePreference, TokenStore, TokenStoreError,
+        load_config_with_token_store, save_config_with_token_store,
+        save_config_without_token_store,
     };
 
     #[test]
-    fn defaults_target_local_aria2_without_secret() {
+    fn default_config_selects_managed_mode() {
+        let config = PersistedConfig::default();
+
+        assert_eq!(config.daemon_mode(), DaemonMode::Managed);
+    }
+
+    #[test]
+    fn external_settings_default_to_local_aria2_without_secret() {
         let settings = Settings::default();
 
         assert_eq!(settings.endpoint(), "http://localhost:6800/jsonrpc");
@@ -1187,8 +1263,11 @@ mod tests {
         let contents = fs::read_to_string(&path).expect("config file");
         let loaded = load_config_with_token_store(&path, &token_store);
 
+        assert!(contents.contains("[daemon]"));
+        assert!(contents.contains("mode = \"external\""));
         assert!(contents.contains("websocket_enabled = true"));
         assert_eq!(loaded.feedback(), None);
+        assert_eq!(loaded.config().daemon_mode(), DaemonMode::External);
         assert_eq!(
             loaded.config().settings().endpoint(),
             "http://aria2.local:6800/jsonrpc"
@@ -1255,6 +1334,7 @@ mod tests {
 
         let loaded = load_config_with_token_store(&path, &MemoryTokenStore::default());
 
+        assert_eq!(loaded.config().daemon_mode(), DaemonMode::External);
         assert_eq!(
             loaded.config().settings().endpoint(),
             "http://aria2.local:6800/jsonrpc"
@@ -1266,12 +1346,69 @@ mod tests {
     }
 
     #[test]
+    fn pre_mode_toml_config_loads_as_external_mode() {
+        let path = temp_config_path("pre-mode-toml");
+        fs::write(
+            &path,
+            r#"
+version = 1
+
+[connection]
+endpoint = "http://aria2.local:6800/jsonrpc"
+polling_interval_seconds = 7
+websocket_enabled = false
+
+[auth]
+storage = "none"
+"#,
+        )
+        .expect("pre-mode config");
+
+        let loaded = load_config_with_token_store(&path, &MemoryTokenStore::default());
+
+        assert_eq!(loaded.config().daemon_mode(), DaemonMode::External);
+        assert_eq!(
+            loaded.config().settings().endpoint(),
+            "http://aria2.local:6800/jsonrpc"
+        );
+    }
+
+    #[test]
+    fn managed_mode_persists_external_settings_without_managed_endpoint_or_secret() {
+        let path = temp_config_path("managed-preserves-external");
+        let token_store = MemoryTokenStore::default();
+        let settings = Settings::new(
+            "http://external.local:6800/jsonrpc",
+            RpcAuth::SessionSecret(Secret::session("external-secret")),
+            3,
+            false,
+        )
+        .expect("settings");
+        let config = PersistedConfig::with_auth_storage(settings, "active", AuthStorage::Keyring)
+            .with_daemon_mode(DaemonMode::Managed);
+
+        save_config_with_token_store(&path, &config, None, &token_store).expect("config saves");
+        let contents = fs::read_to_string(&path).expect("config file");
+        let loaded = load_config_with_token_store(&path, &token_store);
+
+        assert!(contents.contains("mode = \"managed\""));
+        assert!(contents.contains("endpoint = \"http://external.local:6800/jsonrpc\""));
+        assert!(!contents.contains("external-secret"));
+        assert_eq!(loaded.config().daemon_mode(), DaemonMode::Managed);
+        assert_eq!(
+            loaded.config().settings().auth(),
+            &RpcAuth::SessionSecret(Secret::session("external-secret"))
+        );
+    }
+
+    #[test]
     fn invalid_config_recovers_to_defaults_with_feedback() {
         let path = temp_config_path("invalid");
         fs::write(&path, "endpoint=ftp://bad\n").expect("write invalid config");
 
         let loaded = load_config_with_token_store(&path, &MemoryTokenStore::default());
 
+        assert_eq!(loaded.config().daemon_mode(), DaemonMode::Managed);
         assert_eq!(loaded.config().settings(), &Settings::default());
         assert_eq!(
             loaded.feedback(),
