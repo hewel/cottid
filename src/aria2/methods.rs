@@ -268,6 +268,24 @@ pub fn build_purge_stopped_request(id: RequestId, secret: Option<&Secret>) -> Js
     }
 }
 
+pub fn build_save_session_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.saveSession",
+        params: token_params(secret),
+    }
+}
+
+pub fn build_shutdown_request(id: RequestId, secret: Option<&Secret>) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0",
+        id,
+        method: "aria2.shutdown",
+        params: token_params(secret),
+    }
+}
+
 pub fn build_multicall_request(id: RequestId, calls: Vec<MulticallMethod>) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0",
@@ -368,9 +386,10 @@ mod tests {
         build_get_global_option_request, build_get_global_stat_call, build_get_global_stat_request,
         build_get_version_request, build_list_notifications_request, build_multicall_request,
         build_pause_request, build_purge_stopped_request, build_remove_request,
-        build_tell_active_call, build_tell_active_request, build_tell_status_call,
-        build_tell_status_request, build_tell_stopped_call, build_tell_stopped_request,
-        build_tell_waiting_call, build_tell_waiting_request, build_unpause_request,
+        build_save_session_request, build_shutdown_request, build_tell_active_call,
+        build_tell_active_request, build_tell_status_call, build_tell_status_request,
+        build_tell_stopped_call, build_tell_stopped_request, build_tell_waiting_call,
+        build_tell_waiting_request, build_unpause_request,
     };
     use crate::config::Secret;
 
@@ -591,6 +610,21 @@ mod tests {
 
         assert_eq!(request.method(), "aria2.purgeDownloadResult");
         assert!(request.params().is_empty());
+    }
+
+    #[test]
+    fn builds_shutdown_requests_with_token() {
+        let secret = Secret::session("session-secret");
+        let save = build_save_session_request(RequestId::new(45), Some(&secret));
+        let shutdown = build_shutdown_request(RequestId::new(46), Some(&secret));
+
+        assert_eq!(save.method(), "aria2.saveSession");
+        assert_eq!(shutdown.method(), "aria2.shutdown");
+        assert_eq!(
+            save.params(),
+            &[JsonRpcParam::String("token:session-secret".to_owned())]
+        );
+        assert_eq!(shutdown.params(), save.params());
     }
 
     #[test]

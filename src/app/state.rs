@@ -16,7 +16,9 @@ use crate::config::{
     save_config_with_token_store, save_config_without_token_store,
 };
 use crate::daemon::paths::{ManagedDaemonPaths, default_managed_root_dir};
-use crate::daemon::{DaemonError, DaemonManager, ManagedDaemonConfig, ManagedDaemonStart};
+use crate::daemon::{
+    DaemonError, DaemonManager, ManagedDaemonConfig, ManagedDaemonStart, ManagedDaemonStop,
+};
 use crate::ui::overlay::{PopoverId, PopoverState};
 use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
 use crate::util::format::{
@@ -48,8 +50,23 @@ pub enum DaemonStatus {
     Stopped,
     Starting,
     Running,
+    Stopping,
     Crashed,
     Failed,
+}
+
+pub(super) enum SettingsSaveEffect {
+    None,
+    SaveRuntimeOptions {
+        generation: u64,
+        settings: Settings,
+        options: RuntimeGlobalOptions,
+    },
+    StartManaged,
+    StopManagedThenConnectExternal {
+        generation: u64,
+        manager: DaemonManager,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,6 +436,7 @@ impl State {
                 generation: 0,
                 manager: None,
                 error: None,
+                shutdown_warning: None,
                 auto_restart_used: false,
             },
             connection: ConnectionState {
@@ -517,6 +535,10 @@ impl State {
 
     pub fn daemon_error_text(&self) -> Option<&'static str> {
         self.daemon.error.as_ref().map(DaemonError::display_message)
+    }
+
+    pub fn daemon_shutdown_warning_text(&self) -> Option<&str> {
+        self.daemon.shutdown_warning.as_deref()
     }
 
     pub fn managed_daemon_log_path_text(&self) -> Option<String> {
@@ -982,6 +1004,8 @@ impl State {
         self.daemon.status = DaemonStatus::Starting;
         self.daemon.manager = None;
         self.daemon.error = None;
+        self.daemon.shutdown_warning = None;
+        self.daemon.auto_restart_used = false;
         self.connection.status = ConnectionStatus::Offline;
         self.connection.version = None;
         self.connection.settings = None;
@@ -1014,6 +1038,7 @@ impl State {
                 let settings = manager.runtime().settings().clone();
                 self.daemon.status = DaemonStatus::Running;
                 self.daemon.error = None;
+                self.daemon.shutdown_warning = None;
                 self.connection.status = ConnectionStatus::Connected;
                 self.websocket_status = if settings.websocket_enabled() {
                     WebSocketStatus::Connecting
@@ -1066,7 +1091,9 @@ impl State {
         &mut self,
         generation: u64,
     ) -> Option<(u64, ManagedDaemonConfig)> {
-        if generation != self.daemon.generation {
+        if generation != self.daemon.generation
+            || !matches!(self.daemon.status, DaemonStatus::Running)
+        {
             return None;
         }
 
@@ -1101,6 +1128,89 @@ impl State {
             self.daemon.generation,
             self.managed_daemon_config_for_paths(paths),
         ))
+    }
+
+    pub(super) fn begin_managed_daemon_shutdown(&mut self) -> Option<(u64, DaemonManager)> {
+        let manager = self.daemon.manager.take()?;
+
+        self.daemon.generation += 1;
+        self.daemon.status = DaemonStatus::Stopping;
+        self.daemon.error = None;
+        self.daemon.shutdown_warning = None;
+        self.connection.status = ConnectionStatus::Offline;
+        self.connection.version = None;
+        self.connection.settings = None;
+        self.websocket_status = WebSocketStatus::Disabled;
+        self.scheduler.cancel_in_flight();
+        self.downloads.feedback = None;
+        if self.downloads.is_empty() {
+            self.downloads.refresh_state = RefreshState::NeverRefreshed;
+        } else {
+            self.downloads.refresh_state = RefreshState::Stale;
+        }
+
+        Some((self.daemon.generation, manager))
+    }
+
+    pub(super) fn finish_managed_daemon_shutdown(
+        &mut self,
+        generation: u64,
+        result: Result<ManagedDaemonStop, DaemonError>,
+    ) -> bool {
+        if generation != self.daemon.generation
+            || !matches!(self.daemon.status, DaemonStatus::Stopping)
+        {
+            return false;
+        }
+
+        self.daemon.manager = None;
+        self.connection.version = None;
+        self.connection.settings = None;
+        self.websocket_status = WebSocketStatus::Disabled;
+
+        match result {
+            Ok(report) => {
+                self.daemon.error = None;
+                let mut warnings = Vec::new();
+                if let Some(error) = report.save_session_error() {
+                    warnings.push(format!(
+                        "Managed aria2 session save failed: {}",
+                        error.display_message()
+                    ));
+                }
+                if let Some(error) = report.shutdown_error() {
+                    warnings.push(format!(
+                        "Managed aria2 shutdown RPC failed: {}",
+                        error.display_message()
+                    ));
+                }
+                if report.killed_after_timeout() {
+                    warnings.push(
+                        "Managed aria2 did not exit before timeout; killed local child.".to_owned(),
+                    );
+                }
+                self.daemon.shutdown_warning = if warnings.is_empty() {
+                    None
+                } else {
+                    Some(warnings.join(" "))
+                };
+                self.daemon.status = if matches!(self.settings.daemon_mode, DaemonMode::External) {
+                    DaemonStatus::External
+                } else {
+                    DaemonStatus::Stopped
+                };
+                self.connection.status = ConnectionStatus::Offline;
+                true
+            }
+            Err(error) => {
+                self.daemon.status = DaemonStatus::Failed;
+                self.daemon.error = Some(error.clone());
+                self.daemon.shutdown_warning = None;
+                self.connection.status = ConnectionStatus::Failed;
+                self.settings.feedback = Some(FormFeedback::error(error.display_message()));
+                false
+            }
+        }
     }
 
     fn managed_daemon_config_for_paths(&self, paths: ManagedDaemonPaths) -> ManagedDaemonConfig {
@@ -1902,13 +2012,27 @@ impl State {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn save_settings(&mut self) -> Option<(u64, Settings, RuntimeGlobalOptions)> {
+        match self.save_settings_effect() {
+            SettingsSaveEffect::SaveRuntimeOptions {
+                generation,
+                settings,
+                options,
+            } => Some((generation, settings, options)),
+            SettingsSaveEffect::None
+            | SettingsSaveEffect::StartManaged
+            | SettingsSaveEffect::StopManagedThenConnectExternal { .. } => None,
+        }
+    }
+
+    pub(super) fn save_settings_effect(&mut self) -> SettingsSaveEffect {
         match self.settings.draft.apply() {
             Ok(settings) => {
                 if let Some(message) = self.settings_validation_message() {
                     self.settings.feedback = Some(FormFeedback::error(message));
                     self.settings.open = true;
-                    return None;
+                    return SettingsSaveEffect::None;
                 }
                 self.settings.new_download_directory =
                     self.settings.draft_new_download_directory.trim().to_owned();
@@ -1944,6 +2068,7 @@ impl State {
                     .to_owned();
                 let directory = self.settings.new_download_directory.clone();
                 let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
+                let previous_daemon_mode = self.settings.daemon_mode;
                 let daemon_mode = self.settings.draft_daemon_mode;
                 self.commit_settings(
                     settings,
@@ -1952,6 +2077,20 @@ impl State {
                     true,
                     "Settings saved.",
                 );
+                if matches!(previous_daemon_mode, DaemonMode::Managed)
+                    && matches!(daemon_mode, DaemonMode::External)
+                    && let Some((generation, manager)) = self.begin_managed_daemon_shutdown()
+                {
+                    return SettingsSaveEffect::StopManagedThenConnectExternal {
+                        generation,
+                        manager,
+                    };
+                }
+                if matches!(previous_daemon_mode, DaemonMode::External)
+                    && matches!(daemon_mode, DaemonMode::Managed)
+                {
+                    return SettingsSaveEffect::StartManaged;
+                }
                 let runtime_options = RuntimeGlobalOptions::with_values(
                     clean_optional(&directory),
                     clean_optional(&self.settings.runtime_max_concurrent_downloads),
@@ -1959,7 +2098,7 @@ impl State {
                     clean_optional(&self.settings.runtime_max_overall_upload_limit),
                 );
                 if runtime_options.clone().into_rpc_options().is_empty() {
-                    return None;
+                    return SettingsSaveEffect::None;
                 }
                 self.connection
                     .settings
@@ -1977,10 +2116,18 @@ impl State {
                             runtime_options,
                         )
                     })
+                    .map_or(
+                        SettingsSaveEffect::None,
+                        |(generation, settings, options)| SettingsSaveEffect::SaveRuntimeOptions {
+                            generation,
+                            settings,
+                            options,
+                        },
+                    )
             }
             Err(_error) => {
                 self.settings.open = true;
-                None
+                SettingsSaveEffect::None
             }
         }
     }
@@ -2482,6 +2629,7 @@ struct DaemonState {
     generation: u64,
     manager: Option<DaemonManager>,
     error: Option<DaemonError>,
+    shutdown_warning: Option<String>,
     auto_restart_used: bool,
 }
 
@@ -2900,6 +3048,7 @@ fn daemon_status_label(status: DaemonStatus) -> &'static str {
         DaemonStatus::Stopped => "Managed stopped",
         DaemonStatus::Starting => "Managed starting",
         DaemonStatus::Running => "Managed running",
+        DaemonStatus::Stopping => "Managed stopping",
         DaemonStatus::Crashed => "Managed crashed",
         DaemonStatus::Failed => "Managed failed",
     }

@@ -1,10 +1,11 @@
 use iced::Task;
 use iced::widget::operation;
 
-use super::state::RunningAction;
+use super::state::{RunningAction, SettingsSaveEffect};
 use super::{
-    ActionMessage, AddMessage, ConnectionMessage, DaemonMessage, DownloadsMessage, Message,
-    SelectionMessage, SettingsMessage, State, ToolbarMessage, WebSocketMessage,
+    ActionMessage, AddMessage, ConnectionMessage, DaemonMessage, DownloadsMessage,
+    ManagedDaemonStopAction, Message, SelectionMessage, SettingsMessage, State, ToolbarMessage,
+    WebSocketMessage,
 };
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -35,6 +36,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Settings(message) => update_settings(state, message),
         Message::WebSocket(message) => update_websocket(state, message),
         Message::FocusTextInput(target) => operation::focus(target.id()),
+        Message::WindowCloseRequested { window_id } => begin_window_close(state, window_id),
         Message::WindowResized { width, height } => {
             state.set_viewport_size(width, height);
             Task::none()
@@ -68,6 +70,35 @@ fn start_managed_daemon_task(
     )
 }
 
+fn stop_managed_daemon_task(
+    generation: u64,
+    manager: crate::daemon::DaemonManager,
+    action: ManagedDaemonStopAction,
+) -> Task<Message> {
+    Task::perform(
+        async move { crate::daemon::stop_managed_daemon(manager).await },
+        move |result| {
+            Message::Daemon(DaemonMessage::StopFinished {
+                generation,
+                action,
+                result,
+            })
+        },
+    )
+}
+
+fn begin_window_close(state: &mut State, window_id: iced::window::Id) -> Task<Message> {
+    let Some((generation, manager)) = state.begin_managed_daemon_shutdown() else {
+        return iced::window::close(window_id);
+    };
+
+    stop_managed_daemon_task(
+        generation,
+        manager,
+        ManagedDaemonStopAction::CloseWindow(window_id),
+    )
+}
+
 fn update_daemon(state: &mut State, message: DaemonMessage) -> Task<Message> {
     match message {
         DaemonMessage::MonitorTick => {
@@ -90,6 +121,18 @@ fn update_daemon(state: &mut State, message: DaemonMessage) -> Task<Message> {
             };
 
             start_connected_tasks(state, settings)
+        }
+        DaemonMessage::StopFinished {
+            generation,
+            action,
+            result,
+        } => {
+            let stopped = state.finish_managed_daemon_shutdown(generation, result);
+            match action {
+                ManagedDaemonStopAction::CloseWindow(window_id) => iced::window::close(window_id),
+                ManagedDaemonStopAction::ConnectExternal if stopped => start_connection_test(state),
+                ManagedDaemonStopAction::ConnectExternal => Task::none(),
+            }
         }
     }
 }
@@ -422,12 +465,13 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
             state.cancel_settings();
             Task::none()
         }
-        SettingsMessage::Save => {
-            let Some((generation, settings, options)) = state.save_settings() else {
-                return Task::none();
-            };
-
-            Task::perform(
+        SettingsMessage::Save => match state.save_settings_effect() {
+            SettingsSaveEffect::None => Task::none(),
+            SettingsSaveEffect::SaveRuntimeOptions {
+                generation,
+                settings,
+                options,
+            } => Task::perform(
                 async move {
                     let result = crate::aria2::client::change_runtime_global_options(
                         settings.clone(),
@@ -443,8 +487,17 @@ fn update_settings(state: &mut State, message: SettingsMessage) -> Task<Message>
                         result,
                     })
                 },
-            )
-        }
+            ),
+            SettingsSaveEffect::StartManaged => start_managed_daemon(state),
+            SettingsSaveEffect::StopManagedThenConnectExternal {
+                generation,
+                manager,
+            } => stop_managed_daemon_task(
+                generation,
+                manager,
+                ManagedDaemonStopAction::ConnectExternal,
+            ),
+        },
         SettingsMessage::SavePlaintextFallback => {
             state.save_plaintext_fallback();
             Task::none()

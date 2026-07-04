@@ -11,8 +11,8 @@ use crate::ui::tokens::Mode;
 
 pub use message::{
     ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DaemonMessage, DownloadsMessage,
-    Message, RefreshInvalidation, SelectionMessage, SettingsMessage, TextInputFocusTarget,
-    ToolbarMessage, WebSocketMessage,
+    ManagedDaemonStopAction, Message, RefreshInvalidation, SelectionMessage, SettingsMessage,
+    TextInputFocusTarget, ToolbarMessage, WebSocketMessage,
 };
 #[cfg(test)]
 pub use state::DaemonStatus;
@@ -28,6 +28,7 @@ pub fn run() -> iced::Result {
         .title("Cottid")
         .subscription(subscription)
         .theme(theme)
+        .exit_on_close_request(false)
         .run()
 }
 
@@ -80,7 +81,7 @@ mod tests {
     use crate::aria2::websocket::WebSocketEvent;
     use crate::config::{DaemonMode, PersistedConfig, RpcAuth, Secret, Settings, ThemePreference};
     use crate::daemon::{
-        DaemonManager, ManagedDaemonStart, ManagedRuntimeConfig,
+        DaemonManager, ManagedDaemonStart, ManagedDaemonStop, ManagedRuntimeConfig,
         error::{DaemonError, DaemonErrorKind},
         paths::ManagedDaemonPaths,
     };
@@ -90,9 +91,9 @@ mod tests {
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
         DaemonMessage, DaemonStatus, DownloadFilter, DownloadRowTrailing, DownloadsMessage,
-        FeedbackTone, FileIcon, Message, NotificationOutcome, PendingActionConfirmation,
-        RefreshInvalidation, RefreshState, SelectionMessage, SettingsMessage, State,
-        TextInputFocusTarget, ToolbarMessage, WebSocketMessage,
+        FeedbackTone, FileIcon, ManagedDaemonStopAction, Message, NotificationOutcome,
+        PendingActionConfirmation, RefreshInvalidation, RefreshState, SelectionMessage,
+        SettingsMessage, State, TextInputFocusTarget, ToolbarMessage, WebSocketMessage,
     };
 
     #[test]
@@ -259,6 +260,121 @@ mod tests {
             restart_config.paths().log_file().display().to_string(),
             original_log_path
         );
+    }
+
+    #[test]
+    fn managed_daemon_shutdown_records_save_warning_without_crash_restart() {
+        let path = temp_config_path("managed-stop-warning");
+        let (mut state, _task) = super::boot_from_path(path);
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 1,
+                result: Ok(managed_start(68_01, "managed-secret")),
+            }),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation: 1,
+                result: Ok(snapshot_with_items(Vec::new())),
+            }),
+        );
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let (shutdown_generation, _manager) = state
+            .begin_managed_daemon_shutdown()
+            .expect("running managed daemon stops");
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Stopping);
+        assert_eq!(state.connection_status(), ConnectionStatus::Offline);
+        assert_eq!(state.refresh_state(), RefreshState::Stale);
+        assert!(
+            state
+                .handle_managed_daemon_exit(shutdown_generation)
+                .is_none()
+        );
+
+        assert!(state.finish_managed_daemon_shutdown(
+            shutdown_generation,
+            Ok(ManagedDaemonStop::test(
+                Some(ClientError::Transport("save failed".to_owned())),
+                None,
+                true,
+            )),
+        ));
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Stopped);
+        assert_eq!(state.download_items().len(), 1);
+        assert!(
+            state
+                .daemon_shutdown_warning_text()
+                .expect("shutdown warning")
+                .contains("session save failed")
+        );
+    }
+
+    #[test]
+    fn managed_to_external_save_stops_managed_before_external_connection_test() {
+        let path = temp_config_path("managed-to-external-stop");
+        let (mut state, _task) = super::boot_from_path(path);
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 1,
+                result: Ok(managed_start(68_01, "managed-secret")),
+            }),
+        );
+
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::DaemonModeChanged(DaemonMode::External)),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::EndpointChanged(
+                "http://aria2.local:6800/jsonrpc".to_owned(),
+            )),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(state.daemon_mode(), DaemonMode::External);
+        assert_eq!(state.daemon_status(), DaemonStatus::Stopping);
+        assert_eq!(state.connection_status(), ConnectionStatus::Offline);
+
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StopFinished {
+                generation: 2,
+                action: ManagedDaemonStopAction::ConnectExternal,
+                result: Ok(stop_success()),
+            }),
+        );
+
+        assert_eq!(state.daemon_status(), DaemonStatus::External);
+        assert_eq!(state.connection_status(), ConnectionStatus::Testing);
+        assert_eq!(state.applied_endpoint(), "http://aria2.local:6800/jsonrpc");
+    }
+
+    #[test]
+    fn external_to_managed_save_does_not_shutdown_external_daemon() {
+        let mut state = State::initial();
+        use_external_mode(&mut state);
+
+        let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::DaemonModeChanged(DaemonMode::Managed)),
+        );
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(state.daemon_mode(), DaemonMode::Managed);
+        assert_eq!(state.daemon_status(), DaemonStatus::Starting);
+        assert_eq!(state.connection_status(), ConnectionStatus::Offline);
     }
 
     #[test]
@@ -3036,6 +3152,10 @@ mod tests {
             manager,
             ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new())),
         )
+    }
+
+    fn stop_success() -> ManagedDaemonStop {
+        ManagedDaemonStop::test(None, None, false)
     }
 
     fn use_external_mode(state: &mut State) {
