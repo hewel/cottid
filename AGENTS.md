@@ -1,13 +1,13 @@
 # Cottid Agent Guide
 
-Cottid is a Rust `iced` desktop frontend for controlling an external `aria2c`
-engine through aria2 JSON-RPC. The MVP connects to an already-running aria2 RPC
-server.
+Cottid is a Rust `iced` desktop frontend for controlling `aria2c` through aria2
+JSON-RPC. It supports an external user-managed RPC server and an approved
+managed local `aria2c` process.
 
 ## Critical Rules
 
 - **Dependencies:** Do not add dependencies without explicit human approval. Use Cargo commands such as `cargo add` to add packages or enable dependency features; do not hand-edit dependency entries.
-- **Aria2 Integration:** Do not embed aria2, wrap libaria2, or reimplement download logic. Keep MVP work focused on the approved existing-RPC-server scope.
+- **Aria2 Integration:** Do not embed aria2, wrap libaria2, or reimplement download logic. Managed mode may spawn `aria2c` as a child process only; external mode must never shut down a user-managed daemon.
 - **Architectural Separation:** Keep UI code separate from RPC/client code. RPC code must not know about `iced` widgets.
 
 ## UI & State Boundaries
@@ -29,7 +29,7 @@ For all current and future implementations:
 - **State Preservation:** Preserve selection, scroll position, dialogs, form drafts, and row expansion state across refreshes. Keep canonical domain state separate from display-only progress estimation.
 - **Adaptive Frequency:** Use different refresh frequencies for active, waiting, and stopped downloads, selected details, and global stats. Reduce frequency when unfocused, minimized, disconnected, idle, or when there are no active downloads.
 - **Connection Failures:** Use exponential backoff on connection failures.
-- **WebSockets:** Treat future WebSocket notifications as invalidation signals, not as direct full-state replacements. Coalesce WebSocket events and refresh through the normal scheduler.
+- **WebSockets:** Treat WebSocket notifications as invalidation signals, not as direct full-state replacements. Coalesce WebSocket events and refresh through the normal scheduler.
 
 ## Engineering & Testing
 
