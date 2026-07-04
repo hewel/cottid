@@ -186,6 +186,7 @@ mod tests {
     fn managed_daemon_start_failure_records_daemon_error_without_refresh() {
         let path = temp_config_path("managed-failure");
         let (mut state, _task) = super::boot_from_path(path);
+        let log_path = temp_config_path("managed-failure-log");
 
         let _task = super::update(
             &mut state,
@@ -194,15 +195,26 @@ mod tests {
                 result: Err(DaemonError::new(
                     DaemonErrorKind::BinaryNotFound,
                     "token:managed-secret",
-                )),
+                )
+                .with_log_path(&log_path)),
             }),
         );
 
         assert_eq!(state.daemon_status(), DaemonStatus::Failed);
+        assert_eq!(state.daemon_status_text(), "Managed failed");
         assert_eq!(state.connection_status(), ConnectionStatus::Failed);
         assert_eq!(
             state.daemon_error().map(DaemonError::kind),
             Some(DaemonErrorKind::BinaryNotFound)
+        );
+        assert_eq!(
+            state.daemon_error_text(),
+            Some("aria2c could not be found.")
+        );
+        assert!(!state.status_text().contains("managed-secret"));
+        assert_eq!(
+            state.managed_daemon_log_path_text(),
+            Some(log_path.display().to_string())
         );
         assert_eq!(state.refresh_state(), RefreshState::NeverRefreshed);
     }

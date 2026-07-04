@@ -509,6 +509,29 @@ impl State {
         self.daemon.error.as_ref()
     }
 
+    pub fn daemon_status_text(&self) -> &'static str {
+        daemon_status_label(self.daemon.status)
+    }
+
+    pub fn daemon_error_text(&self) -> Option<&'static str> {
+        self.daemon.error.as_ref().map(DaemonError::display_message)
+    }
+
+    pub fn managed_daemon_log_path_text(&self) -> Option<String> {
+        self.daemon
+            .error
+            .as_ref()
+            .and_then(DaemonError::log_path)
+            .map(std::path::PathBuf::as_path)
+            .or_else(|| {
+                self.daemon
+                    .manager
+                    .as_ref()
+                    .map(|manager| manager.paths().log_file())
+            })
+            .map(|path| path.display().to_string())
+    }
+
     pub fn is_add_open(&self) -> bool {
         self.add.open
     }

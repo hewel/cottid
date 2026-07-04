@@ -15,6 +15,7 @@ pub enum DaemonErrorKind {
     ConnectionFailed,
     ConfigIo,
     SecretGeneration,
+    Crash,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -68,6 +69,7 @@ impl DaemonError {
             DaemonErrorKind::ConnectionFailed => "Managed aria2 readiness check failed.",
             DaemonErrorKind::ConfigIo => "Managed aria2 paths could not be prepared.",
             DaemonErrorKind::SecretGeneration => "Managed aria2 secret could not be generated.",
+            DaemonErrorKind::Crash => "Managed aria2 exited unexpectedly.",
         }
     }
 
@@ -103,5 +105,26 @@ mod tests {
         let error = DaemonError::new(DaemonErrorKind::SpawnFailed, "token:super-secret");
 
         assert!(!format!("{error:?}").contains("super-secret"));
+    }
+
+    #[test]
+    fn all_daemon_error_kinds_have_display_safe_messages() {
+        for kind in [
+            DaemonErrorKind::BinaryNotFound,
+            DaemonErrorKind::PermissionDenied,
+            DaemonErrorKind::PortUnavailable,
+            DaemonErrorKind::SpawnFailed,
+            DaemonErrorKind::ExitedEarly,
+            DaemonErrorKind::ReadinessTimeout,
+            DaemonErrorKind::AuthFailure,
+            DaemonErrorKind::ConnectionFailed,
+            DaemonErrorKind::ConfigIo,
+            DaemonErrorKind::SecretGeneration,
+            DaemonErrorKind::Crash,
+        ] {
+            let error = DaemonError::new(kind, "token:super-secret");
+
+            assert!(!error.display_message().contains("super-secret"));
+        }
     }
 }
