@@ -1,10 +1,10 @@
 # Cottid Phased Implementation Plan
 
-This plan builds Cottid as a Rust `iced` desktop frontend for an external
-`aria2c` daemon controlled through aria2 JSON-RPC. The MVP connects to an
-already-running daemon. Future daemon management, WebSocket notifications,
+This plan builds Cottid as a Rust `iced` desktop frontend for `aria2c`
+controlled through aria2 JSON-RPC. The current app supports an approved managed
+local `aria2c` child process and external user-managed RPC daemons. Future
 torrent/Metalink depth, browser integration, and multi-profile support must stay
-out of the MVP unless explicitly approved.
+out of scope unless explicitly approved.
 
 ## Dependency Approval Gates
 
@@ -15,8 +15,8 @@ No dependency may be added without human approval.
   crates.
 - Before config persistence: propose and approve config path/format crates, or
   document a stdlib-only fallback and its limits.
-- Future-only approvals: WebSocket client, file dialog, tray, browser
-  integration, and any process-management helpers.
+- Future-only approvals: file dialog, tray, browser integration, and any new
+  process-management helpers.
 
 Each proposal must include crate name, purpose, alternatives, why existing
 dependencies or std are insufficient, and build/runtime/security/maintenance
@@ -90,8 +90,8 @@ User-visible behavior: none unless wired to a test action.
 
 Risks: leaking raw JSON or raw RPC DTOs into app/UI state.
 
-Do not include: WebSocket transport, daemon management, deep torrent/Metalink
-models.
+Do not include in this phase: WebSocket transport, daemon management, deep
+torrent/Metalink models.
 
 Architecture check: UI cannot import raw RPC DTOs.
 
@@ -122,7 +122,8 @@ User-visible behavior: user sees a periodically updating download list.
 
 Risks: clearing useful data on transient refresh failure.
 
-Do not include: WebSocket notifications, queue reordering, torrent file tree.
+Do not include in this phase: WebSocket notifications, queue reordering,
+torrent file tree.
 
 Architecture check: aria2 GIDs and numeric string fields are parsed before app
 state.
@@ -204,33 +205,35 @@ server.
 
 Risks: drifting into non-MVP features.
 
-Do not include: WebSocket, daemon lifecycle, advanced torrent/Metalink UI,
-multi-profile support, tray.
+Do not include in this phase: WebSocket, daemon lifecycle, advanced
+torrent/Metalink UI, multi-profile support, tray.
 
 Architecture check: MVP remains one-endpoint, polling-first, and JSON-RPC-only.
 
-## Future Milestones
+## Later Approved Milestones
 
 ### 12. WebSocket Notification Module
 
 Goal: add `aria2::websocket` and subscription integration for aria2
-notifications.
+notifications and preferred WebSocket RPC transport where enabled.
 
 User-visible behavior: faster updates with less polling.
 
 Risks: reconnect, backoff, and event ordering complexity.
 
-Do not include: daemon management or UI rewrites.
+Do not include in this phase: daemon management or UI rewrites.
 
 ### 13. Managed Aria2c Daemon Module
 
-Goal: add optional local `aria2c` process lifecycle in `aria2::daemon`.
+Goal: add managed local `aria2c` process lifecycle in top-level `daemon/`.
 
-User-visible behavior: user may start/stop a managed local daemon.
+User-visible behavior: new/default config can run a managed local daemon; users
+may still choose an external daemon.
 
 Risks: process cleanup, port/secret conflicts, and platform differences.
 
-Do not include: making managed mode required.
+Do not include: embedding aria2, using libaria2, making managed mode required,
+or shutting down external daemons.
 
 ### 14. Torrent And Metalink Enhancements
 
@@ -288,6 +291,7 @@ Do not include: rewriting the core RPC/domain layers.
 - App state remains split by domain.
 - Top-level update/message stays a router, not a giant implementation block.
 - Raw aria2 numeric strings are parsed before entering app/UI state.
-- WebSocket and daemon logic remain in reserved modules until future milestones.
-- MVP work does not add database storage, daemon lifecycle, multi-profile UI,
-  tray integration, or advanced torrent/Metalink behavior.
+- WebSocket logic remains in `aria2::websocket`; managed process lifecycle
+  remains in top-level `daemon/`.
+- MVP work does not add database storage, multi-profile UI, tray integration,
+  or advanced torrent/Metalink behavior.

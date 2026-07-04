@@ -1,7 +1,8 @@
 # Cottid Domain Model
 
 This document defines the high-level domain model for Cottid, a Rust `iced`
-frontend for controlling an external `aria2c` daemon through aria2 JSON-RPC.
+frontend for controlling `aria2c` through aria2 JSON-RPC. Cottid can connect to
+an external user-managed daemon or own a managed local child process.
 
 The UI must consume normalized domain models only. Raw aria2 JSON-RPC envelopes,
 responses, and string-heavy DTOs stay inside `aria2::raw_types` and are
@@ -181,6 +182,49 @@ Keyring is the preferred persistent mode. Plaintext fallback is a convenience
 fallback for unavailable keyrings, not the default security posture. Session
 only means the token is usable until exit and must be entered again next launch.
 
+### Managed Local Daemon
+
+A managed local daemon is an `aria2c` child process started and owned by
+Cottid.
+
+- It is configured by top-level `daemon/` modules, not by `aria2/` RPC modules.
+- It listens on loopback only with an ephemeral port and generated session
+  secret.
+- It is never started with `--daemon=true`; Cottid must keep the child handle so
+  lifecycle ownership is explicit.
+- Its generated endpoint and secret are runtime-only and must not be persisted.
+
+### External Daemon
+
+An external daemon is an aria2 JSON-RPC server started and administered outside
+Cottid.
+
+- Cottid may connect, authenticate, query, and send user-requested aria2 RPC
+  commands to it.
+- Cottid must not shut it down, overwrite its startup configuration, or assume
+  ownership of its process lifecycle.
+- External endpoint and auth settings are persisted according to the configured
+  `AuthStorage` policy.
+
+### DaemonState
+
+`DaemonState` tracks Cottid's process-lifecycle ownership separately from RPC
+connectivity.
+
+Expected states:
+
+- External.
+- Managed stopped.
+- Managed starting.
+- Managed running.
+- Managed stopping.
+- Managed crashed.
+- Managed failed.
+
+It owns the managed child manager only while Cottid is responsible for that
+child. Intentional shutdown must not be treated as a crash and must not trigger
+auto-restart.
+
 ### ConnectionState
 
 `ConnectionState` tracks connection lifecycle.
@@ -196,7 +240,28 @@ Expected states:
 
 It should store the last successful endpoint identity and a request generation
 or equivalent guard so stale async responses cannot overwrite newer settings.
-Connection-level errors stay separate from per-download errors.
+Connection-level errors stay separate from per-download errors. It does not own
+the managed child process; it only records whether the current RPC settings have
+tested successfully.
+
+### ManagedDaemonConfig
+
+`ManagedDaemonConfig` describes how Cottid starts a managed local `aria2c`
+child.
+
+Expected responsibilities:
+
+- Create the managed root/config/session/log/download paths once and preserve
+  existing config files.
+- Resolve a configured binary path before falling back to `PATH` lookup.
+- Reserve an ephemeral loopback RPC port.
+- Generate a high-entropy session-only RPC secret.
+- Build startup arguments for RPC, session, log, and download paths without
+  `--daemon=true`.
+- Carry readiness timeout and polling/WebSocket preferences into the runtime
+  connection settings.
+
+It must not include user-facing download data or raw JSON-RPC DTOs.
 
 ## App State Separation
 
@@ -206,6 +271,7 @@ Connection-level errors stay separate from per-download errors.
 
 It owns:
 
+- `DaemonState`.
 - `ConnectionState`.
 - `DownloadsState`.
 - `SettingsState`.
@@ -363,8 +429,8 @@ without adding raw aria2 structures to UI state.
 
 ### WebSocket Events
 
-Future WebSocket notifications become typed invalidation events keyed by `Gid`.
-They do not directly replace or mutate canonical download state.
+WebSocket notifications become typed invalidation events keyed by `Gid`. They
+do not directly replace or mutate canonical download state.
 
 Known notification methods:
 
@@ -376,9 +442,9 @@ Known notification methods:
 - `aria2.onBtDownloadComplete`.
 
 Notification handling marks affected list sections dirty and lets the central
-refresh scheduler perform the next HTTP JSON-RPC refresh. BitTorrent completion
-stays distinct from normal completion because aria2 reports torrent download
-completion before seeding has ended.
+refresh scheduler perform the next refresh through the preferred transport.
+BitTorrent completion stays distinct from normal completion because aria2
+reports torrent download completion before seeding has ended.
 
 ### RefreshInvalidation
 
@@ -389,31 +455,17 @@ Sources include:
 
 - User commands that changed aria2 state.
 - Polling cadence.
-- Future WebSocket notifications.
+- WebSocket notifications.
 
 Invalidation is not download data. It carries only enough information to choose
 which sections or selected detail should be refreshed.
 
 ### Managed Daemon State
 
-Future local `aria2c` process lifecycle belongs outside download domain models.
+Local `aria2c` process lifecycle belongs outside download domain models.
 Connection state may reference daemon availability, but downloads remain
-RPC-derived.
-
-### DaemonConfig
-
-`DaemonConfig` is reserved for optional future managed `aria2c` mode.
-
-Expected responsibilities:
-
-- Binary discovery.
-- Config and session path management.
-- PID tracking.
-- Graceful shutdown.
-- Restart.
-- Standard output and standard error diagnostics.
-
-The MVP does not use `DaemonConfig`; it connects to an existing aria2 daemon.
+RPC-derived. Managed daemon state belongs in `app::State` plus top-level
+`daemon/` types, not inside download rows or aria2 raw DTOs.
 
 ## Validation And Testing Targets
 

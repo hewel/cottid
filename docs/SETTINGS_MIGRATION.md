@@ -44,7 +44,7 @@ Discovered setting groups:
 
 | Source Area | Original Key | Category | Meaning | Default Value | Option Type | Recommended Migration Priority | Reason | Target UI Suggestion | Target Config Location | Dependencies / Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| RPC setting | `rpcHost`, `rpcPort`, `rpcInterface`, `protocol` | RPC | Build the aria2 JSON-RPC endpoint. | host `""`, port `6800`, interface `jsonrpc`, protocol `http` | string/enum | Must migrate | Core connection setup, but Cottid should collapse this into one endpoint URL. | URL input | connection settings | Keep one editable endpoint in v1. Keep HTTP(S) endpoint validation; WebSocket is future-only. |
+| RPC setting | `rpcHost`, `rpcPort`, `rpcInterface`, `protocol` | RPC | Build the aria2 JSON-RPC endpoint. | host `""`, port `6800`, interface `jsonrpc`, protocol `http` | string/enum | Must migrate | Core connection setup, but Cottid should collapse this into one endpoint URL. | URL input | connection settings | Keep one editable HTTP(S) endpoint in v1. WebSocket URLs are derived by transport code. |
 | RPC setting | `secret` | RPC | aria2 RPC token. | `""` | secret | Must migrate | Required for secured daemons. | password input or session prompt | connection settings | Follow ADR 0001: keyring-preferred, explicit plaintext fallback, or session-only. Never log/export in plain text. AriaNg base64 is not security. |
 | RPC setting | `rpcAlias` | RPC | Friendly profile name. | `""` | string | Future only | Useful once profiles exist; not required for the single-endpoint v1. | future profile manager | future profiles | Can default to endpoint host when multi-profile support exists. |
 | RPC setting | `extendRpcServers` | RPC | Additional RPC profiles. | `[]` | list/map | Future only | Valuable for power users, but profile switching is not v1. | future profile manager | future profiles | Requires profile selection, per-profile secrets, and config migration. |
@@ -298,6 +298,8 @@ Cottid now exposes the v1 settings surface as modeled fields only:
   `aria2.getGlobalOption` and `aria2.changeGlobalOption`.
 
 Unsupported v1 surfaces remain deliberately absent: raw advanced option editing,
-daemon session controls such as `save-session` / `save-session-interval` /
-`aria2.saveSession`, multi-profile behavior, browser notification settings,
-WebSocket transport settings, and daemon lifecycle management.
+external-daemon session controls such as `save-session` /
+`save-session-interval`, multi-profile behavior, browser notification settings,
+and WebSocket transport settings. Managed mode may call `aria2.saveSession`
+internally during owned-child shutdown, but Cottid still does not expose general
+daemon session administration.

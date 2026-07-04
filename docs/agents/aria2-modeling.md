@@ -6,8 +6,10 @@ Model aria2 JSON-RPC explicitly:
 - `aria2::methods`: method-specific request construction.
 - `aria2::client`: app-facing client operations.
 - `aria2::domain`: normalized downloads, stats, files, and GID types.
-- `aria2::errors`: transport, auth, RPC, parse, config, and future daemon
+- `aria2::errors`: transport, auth, RPC, parse, and config-facing client
   errors.
+- `daemon`: top-level managed local `aria2c` lifecycle, including child
+  process ownership and display-safe daemon errors.
 
 Do not store raw `serde_json::Value` in app state unless a specific reason is
 documented. Favor typed models over loose maps. Treat aria2 GID as a domain type

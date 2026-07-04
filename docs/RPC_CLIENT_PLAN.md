@@ -76,7 +76,9 @@ Responsibilities:
 - JSON-RPC/aria2 RPC errors.
 - Domain conversion errors.
 - Timeout and cancellation errors.
-- Future daemon and WebSocket errors.
+- WebSocket transport errors.
+- Managed daemon errors remain in top-level `daemon/`, not in the RPC client
+  error type.
 
 ## RPC Request Structure
 
@@ -144,8 +146,8 @@ Validation rules:
 - If a user enters a host/port-style endpoint with no path, normalize to
   `/jsonrpc` after approval of the URL parsing approach.
 
-WebSocket URL derivation is future-only and should not affect MVP endpoint
-validation.
+WebSocket URL derivation is implemented in the WebSocket transport layer and
+must not loosen HTTP(S) endpoint validation for the primary settings field.
 
 ## MVP Method Wrappers
 
