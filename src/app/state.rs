@@ -48,6 +48,7 @@ pub enum DaemonStatus {
     Stopped,
     Starting,
     Running,
+    Crashed,
     Failed,
 }
 
@@ -418,6 +419,7 @@ impl State {
                 generation: 0,
                 manager: None,
                 error: None,
+                auto_restart_used: false,
             },
             connection: ConnectionState {
                 status: ConnectionStatus::Offline,
@@ -922,6 +924,16 @@ impl State {
         self.connection.version.as_deref()
     }
 
+    #[cfg(test)]
+    pub fn connected_endpoint(&self) -> Option<&str> {
+        self.connection.settings.as_ref().map(Settings::endpoint)
+    }
+
+    #[cfg(test)]
+    pub fn connected_auth(&self) -> Option<&crate::config::RpcAuth> {
+        self.connection.settings.as_ref().map(Settings::auth)
+    }
+
     pub(super) fn begin_connection_test(&mut self) -> Option<(u64, Settings)> {
         if !matches!(self.settings.draft_daemon_mode, DaemonMode::External) {
             if self.settings.open {
@@ -975,10 +987,9 @@ impl State {
         self.connection.settings = None;
         self.websocket_status = WebSocketStatus::Disabled;
 
-        let paths = ManagedDaemonPaths::from_root(default_managed_root_dir());
-        let config = ManagedDaemonConfig::new(paths)
-            .with_polling_interval_seconds(self.settings.applied.polling_interval_seconds())
-            .with_websocket_enabled(self.settings.applied.websocket_enabled());
+        let config = self.managed_daemon_config_for_paths(ManagedDaemonPaths::from_root(
+            default_managed_root_dir(),
+        ));
 
         Some((self.daemon.generation, config))
     }
@@ -989,7 +1000,10 @@ impl State {
         result: Result<ManagedDaemonStart, DaemonError>,
     ) -> Option<Settings> {
         if generation != self.daemon.generation
-            || !matches!(self.daemon.status, DaemonStatus::Starting)
+            || !matches!(
+                self.daemon.status,
+                DaemonStatus::Starting | DaemonStatus::Crashed
+            )
         {
             return None;
         }
@@ -1023,6 +1037,76 @@ impl State {
                 None
             }
         }
+    }
+
+    pub(super) fn is_managed_daemon_running(&self) -> bool {
+        matches!(self.daemon.status, DaemonStatus::Running) && self.daemon.manager.is_some()
+    }
+
+    pub(super) fn poll_managed_daemon_exit(&mut self) -> Option<(u64, ManagedDaemonConfig)> {
+        if !matches!(self.daemon.status, DaemonStatus::Running) {
+            return None;
+        }
+
+        let Some(manager) = self.daemon.manager.as_ref() else {
+            return None;
+        };
+
+        match manager.try_wait() {
+            Ok(Some(_status)) => self.handle_managed_daemon_exit(self.daemon.generation),
+            Ok(None) => None,
+            Err(error) => {
+                self.daemon.error = Some(error);
+                None
+            }
+        }
+    }
+
+    pub(super) fn handle_managed_daemon_exit(
+        &mut self,
+        generation: u64,
+    ) -> Option<(u64, ManagedDaemonConfig)> {
+        if generation != self.daemon.generation {
+            return None;
+        }
+
+        let paths = self
+            .daemon
+            .manager
+            .as_ref()
+            .map(|manager| manager.paths().clone())
+            .unwrap_or_else(|| ManagedDaemonPaths::from_root(default_managed_root_dir()));
+        self.daemon.manager = None;
+        self.connection.status = ConnectionStatus::Failed;
+        self.connection.version = None;
+        self.connection.settings = None;
+        self.websocket_status = WebSocketStatus::Disabled;
+        self.daemon.error = Some(
+            DaemonError::new(
+                crate::daemon::error::DaemonErrorKind::Crash,
+                "managed child exited",
+            )
+            .with_log_path(paths.log_file()),
+        );
+
+        if self.daemon.auto_restart_used {
+            self.daemon.status = DaemonStatus::Crashed;
+            return None;
+        }
+
+        self.daemon.auto_restart_used = true;
+        self.daemon.status = DaemonStatus::Crashed;
+        self.daemon.generation += 1;
+        Some((
+            self.daemon.generation,
+            self.managed_daemon_config_for_paths(paths),
+        ))
+    }
+
+    fn managed_daemon_config_for_paths(&self, paths: ManagedDaemonPaths) -> ManagedDaemonConfig {
+        ManagedDaemonConfig::new(paths)
+            .with_polling_interval_seconds(self.settings.applied.polling_interval_seconds())
+            .with_websocket_enabled(self.settings.applied.websocket_enabled())
     }
 
     pub(super) fn finish_connection_test(
@@ -2398,6 +2482,7 @@ struct DaemonState {
     generation: u64,
     manager: Option<DaemonManager>,
     error: Option<DaemonError>,
+    auto_restart_used: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2815,6 +2900,7 @@ fn daemon_status_label(status: DaemonStatus) -> &'static str {
         DaemonStatus::Stopped => "Managed stopped",
         DaemonStatus::Starting => "Managed starting",
         DaemonStatus::Running => "Managed running",
+        DaemonStatus::Crashed => "Managed crashed",
         DaemonStatus::Failed => "Managed failed",
     }
 }

@@ -78,7 +78,7 @@ mod tests {
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
     use crate::aria2::websocket::WebSocketEvent;
-    use crate::config::{DaemonMode, PersistedConfig, Secret, Settings, ThemePreference};
+    use crate::config::{DaemonMode, PersistedConfig, RpcAuth, Secret, Settings, ThemePreference};
     use crate::daemon::{
         DaemonManager, ManagedDaemonStart, ManagedRuntimeConfig,
         error::{DaemonError, DaemonErrorKind},
@@ -157,16 +157,7 @@ mod tests {
     fn managed_daemon_readiness_connects_and_starts_initial_refresh() {
         let path = temp_config_path("managed-ready");
         let (mut state, _task) = super::boot_from_path(path);
-        let runtime = ManagedRuntimeConfig::new(68_01, Secret::session("managed-secret"), 2, true)
-            .expect("runtime config");
-        let manager = DaemonManager::test(
-            runtime,
-            ManagedDaemonPaths::from_root(temp_config_path("managed-root")),
-        );
-        let started = ManagedDaemonStart::test(
-            manager,
-            ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new())),
-        );
+        let started = managed_start(68_01, "managed-secret");
 
         let _task = super::update(
             &mut state,
@@ -180,6 +171,94 @@ mod tests {
         assert_eq!(state.connection_status(), ConnectionStatus::Connected);
         assert_eq!(state.connected_version(), Some("1.37.0"));
         assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+    }
+
+    #[test]
+    fn managed_daemon_crash_preserves_snapshot_and_restarts_once_with_fresh_runtime() {
+        let path = temp_config_path("managed-crash");
+        let (mut state, _task) = super::boot_from_path(path);
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 1,
+                result: Ok(managed_start(68_01, "first-secret")),
+            }),
+        );
+        let _task = super::update(
+            &mut state,
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation: 1,
+                result: Ok(snapshot_with_items(Vec::new())),
+            }),
+        );
+        apply_snapshot(
+            &mut state,
+            vec![download_item("active-gid", DownloadStatus::Active)],
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::ChildExited { generation: 1 }),
+        );
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Crashed);
+        assert_eq!(state.connection_status(), ConnectionStatus::Failed);
+        assert_eq!(state.download_items().len(), 1);
+        assert_eq!(state.refresh_state(), RefreshState::Fresh);
+
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 2,
+                result: Ok(managed_start(68_02, "second-secret")),
+            }),
+        );
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Running);
+        assert_eq!(state.connection_status(), ConnectionStatus::Connected);
+        assert_eq!(
+            state.connected_endpoint(),
+            Some("http://127.0.0.1:6802/jsonrpc")
+        );
+        assert_eq!(
+            state.connected_auth(),
+            Some(&RpcAuth::SessionSecret(Secret::session("second-secret")))
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::ChildExited { generation: 2 }),
+        );
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Crashed);
+        assert_eq!(state.connection_status(), ConnectionStatus::Failed);
+        assert_eq!(state.download_items().len(), 1);
+    }
+
+    #[test]
+    fn managed_daemon_restart_reuses_existing_paths() {
+        let path = temp_config_path("managed-crash-paths");
+        let (mut state, _task) = super::boot_from_path(path);
+        let root = temp_config_path("managed-root-reuse");
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 1,
+                result: Ok(managed_start_with_root(68_01, "first-secret", root.clone())),
+            }),
+        );
+        let original_log_path = state
+            .managed_daemon_log_path_text()
+            .expect("running daemon log path");
+
+        let (_generation, restart_config) = state
+            .handle_managed_daemon_exit(1)
+            .expect("first crash restarts");
+
+        assert_eq!(
+            restart_config.paths().log_file().display().to_string(),
+            original_log_path
+        );
     }
 
     #[test]
@@ -2939,6 +3018,24 @@ mod tests {
                 result: Ok(snapshot_with_items(Vec::new())),
             }),
         );
+    }
+
+    fn managed_start(port: u16, secret: &str) -> ManagedDaemonStart {
+        managed_start_with_root(port, secret, temp_config_path("managed-root"))
+    }
+
+    fn managed_start_with_root(
+        port: u16,
+        secret: &str,
+        root: std::path::PathBuf,
+    ) -> ManagedDaemonStart {
+        let runtime = ManagedRuntimeConfig::new(port, Secret::session(secret), 2, true)
+            .expect("runtime config");
+        let manager = DaemonManager::test(runtime, ManagedDaemonPaths::from_root(root));
+        ManagedDaemonStart::test(
+            manager,
+            ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new())),
+        )
     }
 
     fn use_external_mode(state: &mut State) {

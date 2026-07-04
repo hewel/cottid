@@ -1,5 +1,5 @@
 use std::fmt;
-use std::process::Child;
+use std::process::{Child, ExitStatus};
 use std::sync::{Arc, Mutex};
 
 use crate::config::Secret;
@@ -34,6 +34,18 @@ impl DaemonManager {
 
     pub fn runtime(&self) -> &ManagedRuntimeConfig {
         &self.runtime
+    }
+
+    pub fn try_wait(&self) -> Result<Option<ExitStatus>, DaemonError> {
+        let Some(child) = self.child.as_ref() else {
+            return Ok(None);
+        };
+        let mut child = child
+            .lock()
+            .map_err(|_| DaemonError::new(DaemonErrorKind::Crash, "child lock poisoned"))?;
+        child
+            .try_wait()
+            .map_err(|error| DaemonError::new(DaemonErrorKind::Crash, error.to_string()))
     }
 }
 

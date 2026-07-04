@@ -48,6 +48,10 @@ pub enum Message {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DaemonMessage {
+    MonitorTick,
+    ChildExited {
+        generation: u64,
+    },
     StartFinished {
         generation: u64,
         result: Result<ManagedDaemonStart, DaemonError>,
