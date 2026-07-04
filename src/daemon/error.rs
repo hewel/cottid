@@ -16,6 +16,7 @@ pub enum DaemonErrorKind {
     ConfigIo,
     SecretGeneration,
     Crash,
+    ShutdownFailed,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -70,6 +71,7 @@ impl DaemonError {
             DaemonErrorKind::ConfigIo => "Managed aria2 paths could not be prepared.",
             DaemonErrorKind::SecretGeneration => "Managed aria2 secret could not be generated.",
             DaemonErrorKind::Crash => "Managed aria2 exited unexpectedly.",
+            DaemonErrorKind::ShutdownFailed => "Managed aria2 could not be stopped cleanly.",
         }
     }
 
@@ -121,6 +123,7 @@ mod tests {
             DaemonErrorKind::ConfigIo,
             DaemonErrorKind::SecretGeneration,
             DaemonErrorKind::Crash,
+            DaemonErrorKind::ShutdownFailed,
         ] {
             let error = DaemonError::new(kind, "token:super-secret");
 

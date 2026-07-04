@@ -12,9 +12,9 @@ use crate::aria2::methods::{
     JsonRpcRequest, RequestId, build_add_uri_request, build_change_global_option_request,
     build_get_global_option_request, build_get_global_stat_call, build_get_version_request,
     build_list_notifications_request, build_multicall_request, build_pause_request,
-    build_purge_stopped_request, build_remove_request, build_tell_active_call,
-    build_tell_status_call, build_tell_stopped_call, build_tell_waiting_call,
-    build_unpause_request,
+    build_purge_stopped_request, build_remove_request, build_save_session_request,
+    build_shutdown_request, build_tell_active_call, build_tell_status_call,
+    build_tell_stopped_call, build_tell_waiting_call, build_unpause_request,
 };
 #[cfg(test)]
 use crate::aria2::raw_types::parse_global_stats_response;
@@ -37,6 +37,8 @@ const SNAPSHOT_MULTICALL_REQUEST_ID: RequestId = RequestId::new(11);
 const GET_GLOBAL_OPTION_REQUEST_ID: RequestId = RequestId::new(12);
 const CHANGE_GLOBAL_OPTION_REQUEST_ID: RequestId = RequestId::new(13);
 const LIST_NOTIFICATIONS_REQUEST_ID: RequestId = RequestId::new(14);
+const SAVE_SESSION_REQUEST_ID: RequestId = RequestId::new(15);
+const SHUTDOWN_REQUEST_ID: RequestId = RequestId::new(16);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionTest {
@@ -383,6 +385,20 @@ pub async fn purge_stopped(settings: Settings) -> Result<(), ClientError> {
     parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
 }
 
+pub async fn save_session(settings: Settings) -> Result<(), ClientError> {
+    let request = build_save_session_request(SAVE_SESSION_REQUEST_ID, secret(&settings));
+    let body = send_rpc_request_preferred(&settings, request).await?;
+
+    parse_ok_response(&body, SAVE_SESSION_REQUEST_ID)
+}
+
+pub async fn shutdown(settings: Settings) -> Result<(), ClientError> {
+    let request = build_shutdown_request(SHUTDOWN_REQUEST_ID, secret(&settings));
+    let body = send_rpc_request_preferred(&settings, request).await?;
+
+    parse_ok_response(&body, SHUTDOWN_REQUEST_ID)
+}
+
 #[cfg(test)]
 pub fn test_connection_with_transport(
     settings: &Settings,
@@ -513,6 +529,28 @@ pub fn purge_stopped_with_transport(
     let body = send_rpc_request(settings, transport, request)?;
 
     parse_ok_response(&body, PURGE_STOPPED_REQUEST_ID)
+}
+
+#[cfg(test)]
+pub fn save_session_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+) -> Result<(), ClientError> {
+    let request = build_save_session_request(SAVE_SESSION_REQUEST_ID, secret(settings));
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_ok_response(&body, SAVE_SESSION_REQUEST_ID)
+}
+
+#[cfg(test)]
+pub fn shutdown_with_transport(
+    settings: &Settings,
+    transport: &impl Transport,
+) -> Result<(), ClientError> {
+    let request = build_shutdown_request(SHUTDOWN_REQUEST_ID, secret(settings));
+    let body = send_rpc_request(settings, transport, request)?;
+
+    parse_ok_response(&body, SHUTDOWN_REQUEST_ID)
 }
 
 fn parse_snapshot_multicall(
@@ -648,7 +686,8 @@ mod tests {
         fetch_download_snapshot_with_transport, fetch_download_snapshot_with_transport_and_request,
         fetch_global_stats_with_transport, get_runtime_global_options_with_transport,
         pause_with_transport, purge_stopped_with_transport, remove_with_transport,
-        test_connection_with_transport, unpause_with_transport,
+        save_session_with_transport, shutdown_with_transport, test_connection_with_transport,
+        unpause_with_transport,
     };
     use crate::aria2::domain::{AddUriOptions, Gid, RuntimeGlobalOptions};
     use crate::aria2::errors::ClientError;
@@ -1017,6 +1056,35 @@ mod tests {
 
         let body: Value = serde_json::from_str(transport.posts.borrow()[0].body()).expect("json");
         assert_eq!(body["method"], "aria2.purgeDownloadResult");
+    }
+
+    #[test]
+    fn shutdown_commands_post_save_session_and_shutdown() {
+        let mut draft = SettingsDraft::from_settings(&Settings::default());
+        draft.set_secret("session-secret");
+        let settings = draft.apply().expect("valid settings");
+
+        let save_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":15,"result":"OK"}"#,
+        )));
+        save_session_with_transport(&settings, &save_transport).expect("save session succeeds");
+
+        let shutdown_transport = FakeTransport::returning(Ok(HttpResponse::ok(
+            r#"{"jsonrpc":"2.0","id":16,"result":"OK"}"#,
+        )));
+        shutdown_with_transport(&settings, &shutdown_transport).expect("shutdown succeeds");
+
+        let save_body: Value =
+            serde_json::from_str(save_transport.posts.borrow()[0].body()).expect("json");
+        let shutdown_body: Value =
+            serde_json::from_str(shutdown_transport.posts.borrow()[0].body()).expect("json");
+
+        assert_eq!(save_body["method"], "aria2.saveSession");
+        assert_eq!(save_body["id"], 15);
+        assert_eq!(save_body["params"][0], "token:session-secret");
+        assert_eq!(shutdown_body["method"], "aria2.shutdown");
+        assert_eq!(shutdown_body["id"], 16);
+        assert_eq!(shutdown_body["params"][0], "token:session-secret");
     }
 
     #[test]

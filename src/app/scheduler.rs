@@ -198,6 +198,13 @@ impl RefreshScheduler {
         true
     }
 
+    pub fn cancel_in_flight(&mut self) {
+        if matches!(self.lifecycle, RefreshLifecycle::InFlight { .. }) {
+            self.in_flight_request = None;
+            self.lifecycle = RefreshLifecycle::Idle;
+        }
+    }
+
     fn advance_backoff(&mut self) -> bool {
         let RefreshLifecycle::Backoff {
             attempt,

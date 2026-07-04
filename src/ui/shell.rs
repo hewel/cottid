@@ -226,6 +226,10 @@ fn connection_detail_content(state: &State) -> Element<'static, Message> {
         content = content.push(text(error).size(12).style(theme::danger_text));
     }
 
+    if let Some(warning) = state.daemon_shutdown_warning_text() {
+        content = content.push(text(warning.to_owned()).size(12).style(theme::muted_text));
+    }
+
     if let Some(log_path) = state.managed_daemon_log_path_text() {
         content = content.push(text(log_path).size(12).style(theme::muted_text));
     }

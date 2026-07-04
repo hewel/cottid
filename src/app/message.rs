@@ -9,7 +9,7 @@ use crate::aria2::websocket::WebSocketEvent;
 use crate::config::DaemonMode;
 use crate::config::Settings;
 use crate::config::ThemePreference;
-use crate::daemon::{DaemonError, ManagedDaemonStart};
+use crate::daemon::{DaemonError, ManagedDaemonStart, ManagedDaemonStop};
 use crate::ui::overlay::PopoverId;
 use crate::ui::widgets::tree_list::TreeMessage;
 
@@ -43,6 +43,7 @@ pub enum Message {
     Settings(SettingsMessage),
     WebSocket(WebSocketMessage),
     FocusTextInput(TextInputFocusTarget),
+    WindowCloseRequested { window_id: iced::window::Id },
     WindowResized { width: u32, height: u32 },
 }
 
@@ -56,6 +57,17 @@ pub enum DaemonMessage {
         generation: u64,
         result: Result<ManagedDaemonStart, DaemonError>,
     },
+    StopFinished {
+        generation: u64,
+        action: ManagedDaemonStopAction,
+        result: Result<ManagedDaemonStop, DaemonError>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedDaemonStopAction {
+    CloseWindow(iced::window::Id),
+    ConnectExternal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

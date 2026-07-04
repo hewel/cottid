@@ -57,9 +57,13 @@ fn websocket_notifications(
     }))
 }
 
-fn app_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
+fn app_event(event: Event, status: event::Status, window_id: iced::window::Id) -> Option<Message> {
     if matches!(status, event::Status::Captured) {
         return None;
+    }
+
+    if let Event::Window(iced::window::Event::CloseRequested) = event {
+        return Some(Message::WindowCloseRequested { window_id });
     }
 
     if let Event::Window(iced::window::Event::Resized(size)) = event {
@@ -178,6 +182,19 @@ mod tests {
         );
 
         assert_eq!(message, None);
+    }
+
+    #[test]
+    fn maps_close_request_to_message() {
+        let window_id = iced::window::Id::unique();
+
+        let message = app_event(
+            iced::Event::Window(iced::window::Event::CloseRequested),
+            iced::event::Status::Ignored,
+            window_id,
+        );
+
+        assert_eq!(message, Some(Message::WindowCloseRequested { window_id }));
     }
 
     fn shortcut(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Message> {

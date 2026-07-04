@@ -1,7 +1,9 @@
 use std::fmt;
 use std::process::{Child, ExitStatus};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use crate::aria2::errors::ClientError;
 use crate::config::Secret;
 use crate::daemon::config::{ManagedDaemonConfig, ManagedRuntimeConfig};
 use crate::daemon::error::{DaemonError, DaemonErrorKind};
@@ -47,6 +49,47 @@ impl DaemonManager {
             .try_wait()
             .map_err(|error| DaemonError::new(DaemonErrorKind::Crash, error.to_string()))
     }
+
+    pub fn wait_for_exit_or_kill(&self, timeout: Duration) -> Result<bool, DaemonError> {
+        let Some(child) = self.child.as_ref() else {
+            return Ok(false);
+        };
+
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.try_wait()?.is_some() {
+                return Ok(false);
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+
+            let remaining = deadline.saturating_duration_since(now);
+            std::thread::sleep(remaining.min(Duration::from_millis(50)));
+        }
+
+        let mut child = child.lock().map_err(|_| {
+            DaemonError::new(DaemonErrorKind::ShutdownFailed, "child lock poisoned")
+        })?;
+        if child
+            .try_wait()
+            .map_err(|error| DaemonError::new(DaemonErrorKind::ShutdownFailed, error.to_string()))?
+            .is_some()
+        {
+            return Ok(false);
+        }
+
+        child.kill().map_err(|error| {
+            DaemonError::new(DaemonErrorKind::ShutdownFailed, error.to_string())
+        })?;
+        child.wait().map_err(|error| {
+            DaemonError::new(DaemonErrorKind::ShutdownFailed, error.to_string())
+        })?;
+
+        Ok(true)
+    }
 }
 
 impl fmt::Debug for DaemonManager {
@@ -85,6 +128,40 @@ impl ManagedDaemonStart {
 
     pub fn into_parts(self) -> (DaemonManager, crate::aria2::client::ConnectionTest) {
         (self.manager, self.version)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedDaemonStop {
+    save_session_error: Option<ClientError>,
+    shutdown_error: Option<ClientError>,
+    killed_after_timeout: bool,
+}
+
+impl ManagedDaemonStop {
+    #[cfg(test)]
+    pub fn test(
+        save_session_error: Option<ClientError>,
+        shutdown_error: Option<ClientError>,
+        killed_after_timeout: bool,
+    ) -> Self {
+        Self {
+            save_session_error,
+            shutdown_error,
+            killed_after_timeout,
+        }
+    }
+
+    pub fn save_session_error(&self) -> Option<&ClientError> {
+        self.save_session_error.as_ref()
+    }
+
+    pub fn shutdown_error(&self) -> Option<&ClientError> {
+        self.shutdown_error.as_ref()
+    }
+
+    pub fn killed_after_timeout(&self) -> bool {
+        self.killed_after_timeout
     }
 }
 
@@ -134,6 +211,21 @@ pub async fn start_managed_daemon(
     })
 }
 
+pub async fn stop_managed_daemon(manager: DaemonManager) -> Result<ManagedDaemonStop, DaemonError> {
+    let settings = manager.runtime().settings().clone();
+    let save_session_error = crate::aria2::client::save_session(settings.clone())
+        .await
+        .err();
+    let shutdown_error = crate::aria2::client::shutdown(settings).await.err();
+    let killed_after_timeout = manager.wait_for_exit_or_kill(Duration::from_secs(3))?;
+
+    Ok(ManagedDaemonStop {
+        save_session_error,
+        shutdown_error,
+        killed_after_timeout,
+    })
+}
+
 fn generate_secret() -> Result<Secret, DaemonError> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes)
@@ -153,10 +245,41 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::hex_encode;
+    use std::process::Command;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use super::{DaemonManager, hex_encode};
+    use crate::config::Secret;
+    use crate::daemon::config::ManagedRuntimeConfig;
+    use crate::daemon::paths::ManagedDaemonPaths;
 
     #[test]
     fn hex_encode_uses_lowercase_pairs() {
         assert_eq!(hex_encode(&[0, 15, 16, 255]), "000f10ff");
+    }
+
+    #[test]
+    fn wait_for_exit_or_kill_kills_child_after_timeout() {
+        let child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn child");
+        let runtime =
+            ManagedRuntimeConfig::new(68_01, Secret::session("secret"), 2, true).expect("runtime");
+        let manager = DaemonManager {
+            child: Some(Arc::new(Mutex::new(child))),
+            paths: ManagedDaemonPaths::from_root(
+                std::env::temp_dir().join("cottid-daemon-kill-fallback-test"),
+            ),
+            runtime,
+        };
+
+        let killed = manager
+            .wait_for_exit_or_kill(Duration::from_millis(1))
+            .expect("kill fallback succeeds");
+
+        assert!(killed);
+        assert!(manager.try_wait().expect("child is waitable").is_some());
     }
 }
