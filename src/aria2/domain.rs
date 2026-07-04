@@ -544,3 +544,69 @@ impl RuntimeGlobalOptions {
 fn non_empty_string(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AddUriOptions, RuntimeGlobalOptions};
+
+    #[test]
+    fn add_uri_options_expose_only_v1_new_download_defaults() {
+        let options = AddUriOptions::new(
+            Some("/downloads".to_owned()),
+            Some("file.iso".to_owned()),
+            Some("1024".to_owned()),
+            Some("2048".to_owned()),
+        )
+        .into_rpc_options();
+
+        let keys = options.keys().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            ["dir", "max-download-limit", "max-upload-limit", "out"]
+        );
+        for unsupported in [
+            "header",
+            "referer",
+            "split",
+            "all-proxy",
+            "save-session",
+            "profile",
+        ] {
+            assert!(!options.contains_key(unsupported));
+        }
+    }
+
+    #[test]
+    fn runtime_global_options_expose_only_v1_allowlist() {
+        let options = RuntimeGlobalOptions::with_values(
+            Some("/downloads".to_owned()),
+            Some("6".to_owned()),
+            Some("4096".to_owned()),
+            Some("512".to_owned()),
+        )
+        .into_rpc_options();
+
+        let keys = options.keys().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            [
+                "dir",
+                "max-concurrent-downloads",
+                "max-overall-download-limit",
+                "max-overall-upload-limit"
+            ]
+        );
+        for unsupported in [
+            "save-session",
+            "save-session-interval",
+            "aria2.saveSession",
+            "header",
+            "browser-notification",
+            "profile",
+        ] {
+            assert!(!options.contains_key(unsupported));
+        }
+    }
+}
