@@ -9,6 +9,7 @@ use crate::aria2::websocket::WebSocketEvent;
 use crate::config::DaemonMode;
 use crate::config::Settings;
 use crate::config::ThemePreference;
+use crate::daemon::{DaemonError, ManagedDaemonStart};
 use crate::ui::overlay::PopoverId;
 use crate::ui::widgets::tree_list::TreeMessage;
 
@@ -31,6 +32,7 @@ pub enum Message {
     Add(AddMessage),
     Action(ActionMessage),
     Connection(ConnectionMessage),
+    Daemon(DaemonMessage),
     Downloads(DownloadsMessage),
     ModalCancel,
     TogglePopover(PopoverId),
@@ -42,6 +44,14 @@ pub enum Message {
     WebSocket(WebSocketMessage),
     FocusTextInput(TextInputFocusTarget),
     WindowResized { width: u32, height: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DaemonMessage {
+    StartFinished {
+        generation: u64,
+        result: Result<ManagedDaemonStart, DaemonError>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

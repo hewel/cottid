@@ -3,8 +3,8 @@ use iced::widget::operation;
 
 use super::state::RunningAction;
 use super::{
-    ActionMessage, AddMessage, ConnectionMessage, DownloadsMessage, Message, SelectionMessage,
-    SettingsMessage, State, ToolbarMessage, WebSocketMessage,
+    ActionMessage, AddMessage, ConnectionMessage, DaemonMessage, DownloadsMessage, Message,
+    SelectionMessage, SettingsMessage, State, ToolbarMessage, WebSocketMessage,
 };
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -12,6 +12,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::Add(message) => update_add(state, message),
         Message::Action(message) => update_action(state, message),
         Message::Connection(message) => update_connection(state, message),
+        Message::Daemon(message) => update_daemon(state, message),
         Message::Downloads(message) => update_downloads(state, message),
         Message::ModalCancel => {
             state.cancel_active_modal();
@@ -37,6 +38,37 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
         Message::WindowResized { width, height } => {
             state.set_viewport_size(width, height);
             Task::none()
+        }
+    }
+}
+
+pub fn start_boot_connection(state: &mut State) -> Task<Message> {
+    if matches!(state.daemon_mode(), crate::config::DaemonMode::Managed) {
+        start_managed_daemon(state)
+    } else {
+        start_connection_test(state)
+    }
+}
+
+pub fn start_managed_daemon(state: &mut State) -> Task<Message> {
+    let Some((generation, config)) = state.begin_managed_daemon_start() else {
+        return Task::none();
+    };
+
+    Task::perform(
+        async move { crate::daemon::start_managed_daemon(config).await },
+        move |result| Message::Daemon(DaemonMessage::StartFinished { generation, result }),
+    )
+}
+
+fn update_daemon(state: &mut State, message: DaemonMessage) -> Task<Message> {
+    match message {
+        DaemonMessage::StartFinished { generation, result } => {
+            let Some(settings) = state.finish_managed_daemon_start(generation, result) else {
+                return Task::none();
+            };
+
+            start_connected_tasks(state, settings)
         }
     }
 }
@@ -220,69 +252,67 @@ fn update_connection(state: &mut State, message: ConnectionMessage) -> Task<Mess
             result,
         } => {
             if state.finish_connection_test(generation, settings.clone(), result) {
-                let Some((refresh_generation, refresh_settings, refresh_request)) =
-                    state.begin_downloads_refresh()
-                else {
-                    return Task::none();
-                };
-
-                let refresh_task = Task::perform(
-                    async move {
-                        crate::aria2::client::fetch_download_snapshot_with_request(
-                            refresh_settings,
-                            refresh_request,
-                        )
-                        .await
-                    },
-                    move |result| {
-                        Message::Downloads(DownloadsMessage::RefreshFinished {
-                            generation: refresh_generation,
-                            result,
-                        })
-                    },
-                );
-                let websocket_settings = settings.clone();
-                let (runtime_generation, runtime_settings) =
-                    state.begin_runtime_global_options_fetch(settings);
-                let runtime_task = Task::perform(
-                    async move {
-                        let result = crate::aria2::client::get_runtime_global_options(
-                            runtime_settings.clone(),
-                        )
-                        .await;
-                        (runtime_settings, result)
-                    },
-                    move |(settings, result)| {
-                        Message::Settings(SettingsMessage::RuntimeGlobalOptionsFetched {
-                            generation: runtime_generation,
-                            settings,
-                            result,
-                        })
-                    },
-                );
-                let websocket_task = if websocket_settings.websocket_enabled() {
-                    Task::perform(
-                        async move {
-                            crate::aria2::client::test_websocket_notifications(websocket_settings)
-                                .await
-                        },
-                        |result| {
-                            Message::WebSocket(WebSocketMessage::Event(match result {
-                                Ok(()) => crate::aria2::websocket::WebSocketEvent::Connected,
-                                Err(_) => crate::aria2::websocket::WebSocketEvent::Degraded,
-                            }))
-                        },
-                    )
-                } else {
-                    Task::none()
-                };
-
-                return Task::batch([refresh_task, runtime_task, websocket_task]);
+                return start_connected_tasks(state, settings);
             }
 
             Task::none()
         }
     }
+}
+
+fn start_connected_tasks(state: &mut State, settings: crate::config::Settings) -> Task<Message> {
+    let Some((refresh_generation, refresh_settings, refresh_request)) =
+        state.begin_downloads_refresh()
+    else {
+        return Task::none();
+    };
+
+    let refresh_task = Task::perform(
+        async move {
+            crate::aria2::client::fetch_download_snapshot_with_request(
+                refresh_settings,
+                refresh_request,
+            )
+            .await
+        },
+        move |result| {
+            Message::Downloads(DownloadsMessage::RefreshFinished {
+                generation: refresh_generation,
+                result,
+            })
+        },
+    );
+    let websocket_settings = settings.clone();
+    let (runtime_generation, runtime_settings) = state.begin_runtime_global_options_fetch(settings);
+    let runtime_task = Task::perform(
+        async move {
+            let result =
+                crate::aria2::client::get_runtime_global_options(runtime_settings.clone()).await;
+            (runtime_settings, result)
+        },
+        move |(settings, result)| {
+            Message::Settings(SettingsMessage::RuntimeGlobalOptionsFetched {
+                generation: runtime_generation,
+                settings,
+                result,
+            })
+        },
+    );
+    let websocket_task = if websocket_settings.websocket_enabled() {
+        Task::perform(
+            async move { crate::aria2::client::test_websocket_notifications(websocket_settings).await },
+            |result| {
+                Message::WebSocket(WebSocketMessage::Event(match result {
+                    Ok(()) => crate::aria2::websocket::WebSocketEvent::Connected,
+                    Err(_) => crate::aria2::websocket::WebSocketEvent::Degraded,
+                }))
+            },
+        )
+    } else {
+        Task::none()
+    };
+
+    Task::batch([refresh_task, runtime_task, websocket_task])
 }
 
 fn update_downloads(state: &mut State, message: DownloadsMessage) -> Task<Message> {

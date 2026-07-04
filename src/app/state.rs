@@ -15,6 +15,8 @@ use crate::config::{
     SystemTokenStore, ThemePreference, default_config_path, load_config,
     save_config_with_token_store, save_config_without_token_store,
 };
+use crate::daemon::paths::{ManagedDaemonPaths, default_managed_root_dir};
+use crate::daemon::{DaemonError, DaemonManager, ManagedDaemonConfig, ManagedDaemonStart};
 use crate::ui::overlay::{PopoverId, PopoverState};
 use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
 use crate::util::format::{
@@ -38,6 +40,15 @@ pub enum WebSocketStatus {
     Connected,
     Degraded,
     Reconnecting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonStatus {
+    External,
+    Stopped,
+    Starting,
+    Running,
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -342,6 +353,7 @@ pub enum FileIcon {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     add: AddState,
+    daemon: DaemonState,
     connection: ConnectionState,
     websocket_status: WebSocketStatus,
     settings: SettingsState,
@@ -385,6 +397,10 @@ impl State {
         let applied_settings = config.settings().clone();
         let draft = SettingsDraft::from_settings(&applied_settings);
         let selected_filter = DownloadFilter::from_config_value(config.selected_filter());
+        let daemon_status = match config.daemon_mode() {
+            DaemonMode::Managed => DaemonStatus::Stopped,
+            DaemonMode::External => DaemonStatus::External,
+        };
 
         Self {
             add: AddState {
@@ -396,6 +412,12 @@ impl State {
                 generation: 0,
                 pending: false,
                 feedback: None,
+            },
+            daemon: DaemonState {
+                status: daemon_status,
+                generation: 0,
+                manager: None,
+                error: None,
             },
             connection: ConnectionState {
                 status: ConnectionStatus::Offline,
@@ -477,6 +499,16 @@ impl State {
         self.connection.status
     }
 
+    #[cfg(test)]
+    pub fn daemon_status(&self) -> DaemonStatus {
+        self.daemon.status
+    }
+
+    #[cfg(test)]
+    pub fn daemon_error(&self) -> Option<&DaemonError> {
+        self.daemon.error.as_ref()
+    }
+
     pub fn is_add_open(&self) -> bool {
         self.add.open
     }
@@ -530,6 +562,7 @@ impl State {
             && !self.add.pending
     }
 
+    #[cfg(test)]
     pub fn is_settings_ready(&self) -> bool {
         self.settings.draft.apply().is_ok()
     }
@@ -713,6 +746,7 @@ impl State {
             })
     }
 
+    #[cfg(test)]
     pub fn notification_intents(&self) -> &[NotificationIntent] {
         &self.notification_intents
     }
@@ -853,7 +887,7 @@ impl State {
     pub fn status_text(&self) -> String {
         format!(
             "{} | {} | {} | {}",
-            self.settings.daemon_mode.label(),
+            daemon_status_label(self.daemon.status),
             connection_label(self.connection.status),
             websocket_status_label(self.websocket_status),
             self.settings.applied.auth().display_label()
@@ -900,6 +934,72 @@ impl State {
         self.settings.feedback = None;
 
         Some((self.connection.generation, settings))
+    }
+
+    pub(super) fn begin_managed_daemon_start(&mut self) -> Option<(u64, ManagedDaemonConfig)> {
+        if !matches!(self.settings.daemon_mode, DaemonMode::Managed)
+            || matches!(self.daemon.status, DaemonStatus::Starting)
+        {
+            return None;
+        }
+
+        self.daemon.generation += 1;
+        self.daemon.status = DaemonStatus::Starting;
+        self.daemon.manager = None;
+        self.daemon.error = None;
+        self.connection.status = ConnectionStatus::Offline;
+        self.connection.version = None;
+        self.connection.settings = None;
+        self.websocket_status = WebSocketStatus::Disabled;
+
+        let paths = ManagedDaemonPaths::from_root(default_managed_root_dir());
+        let config = ManagedDaemonConfig::new(paths)
+            .with_polling_interval_seconds(self.settings.applied.polling_interval_seconds())
+            .with_websocket_enabled(self.settings.applied.websocket_enabled());
+
+        Some((self.daemon.generation, config))
+    }
+
+    pub(super) fn finish_managed_daemon_start(
+        &mut self,
+        generation: u64,
+        result: Result<ManagedDaemonStart, DaemonError>,
+    ) -> Option<Settings> {
+        if generation != self.daemon.generation
+            || !matches!(self.daemon.status, DaemonStatus::Starting)
+        {
+            return None;
+        }
+
+        match result {
+            Ok(started) => {
+                let (manager, version) = started.into_parts();
+                let settings = manager.runtime().settings().clone();
+                self.daemon.status = DaemonStatus::Running;
+                self.daemon.error = None;
+                self.connection.status = ConnectionStatus::Connected;
+                self.websocket_status = if settings.websocket_enabled() {
+                    WebSocketStatus::Connecting
+                } else {
+                    WebSocketStatus::Disabled
+                };
+                self.connection.version = Some(version.version().version().to_owned());
+                self.connection.settings = Some(settings.clone());
+                self.daemon.manager = Some(manager);
+                Some(settings)
+            }
+            Err(error) => {
+                self.daemon.status = DaemonStatus::Failed;
+                self.daemon.manager = None;
+                self.daemon.error = Some(error.clone());
+                self.connection.status = ConnectionStatus::Failed;
+                self.connection.version = None;
+                self.connection.settings = None;
+                self.websocket_status = WebSocketStatus::Disabled;
+                self.settings.feedback = Some(FormFeedback::error(error.display_message()));
+                None
+            }
+        }
     }
 
     pub(super) fn finish_connection_test(
@@ -2270,6 +2370,14 @@ struct ConnectionState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct DaemonState {
+    status: DaemonStatus,
+    generation: u64,
+    manager: Option<DaemonManager>,
+    error: Option<DaemonError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct AddState {
     open: bool,
     input: String,
@@ -2591,10 +2699,12 @@ pub struct NotificationIntent {
 }
 
 impl NotificationIntent {
+    #[cfg(test)]
     pub fn gid(&self) -> &Gid {
         &self.gid
     }
 
+    #[cfg(test)]
     pub fn outcome(&self) -> NotificationOutcome {
         self.outcome
     }
@@ -2673,6 +2783,16 @@ fn connection_label(status: ConnectionStatus) -> &'static str {
         ConnectionStatus::Testing => "Testing...",
         ConnectionStatus::Connected => "Connected",
         ConnectionStatus::Failed => "Connection failed",
+    }
+}
+
+fn daemon_status_label(status: DaemonStatus) -> &'static str {
+    match status {
+        DaemonStatus::External => "External",
+        DaemonStatus::Stopped => "Managed stopped",
+        DaemonStatus::Starting => "Managed starting",
+        DaemonStatus::Running => "Managed running",
+        DaemonStatus::Failed => "Managed failed",
     }
 }
 
