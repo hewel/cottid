@@ -54,6 +54,20 @@ impl Settings {
         Self::new(endpoint, RpcAuth::NoSecret, polling_interval_seconds, true)
     }
 
+    pub fn new_with_session_secret(
+        endpoint: impl Into<String>,
+        secret: Secret,
+        polling_interval_seconds: u16,
+        websocket_enabled: bool,
+    ) -> Result<Self, EndpointValidationError> {
+        Self::new(
+            endpoint,
+            RpcAuth::SessionSecret(secret),
+            polling_interval_seconds,
+            websocket_enabled,
+        )
+    }
+
     fn new(
         endpoint: impl Into<String>,
         auth: RpcAuth,

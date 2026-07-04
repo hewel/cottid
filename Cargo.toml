@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 futures-util = { version = "0.3.32", features = ["sink"] }
+getrandom = "0.4.3"
 iced = { version = "0.14.0", features = ["advanced", "svg", "tokio"] }
 keyring = "4.1.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }

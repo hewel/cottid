@@ -760,6 +760,7 @@ name = "cottid"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "getrandom 0.4.3",
  "iced",
  "keyring",
  "reqwest",

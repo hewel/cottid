@@ -10,10 +10,12 @@ use crate::config::ThemePreference;
 use crate::ui::tokens::Mode;
 
 pub use message::{
-    ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DownloadsMessage, Message,
-    RefreshInvalidation, SelectionMessage, SettingsMessage, TextInputFocusTarget, ToolbarMessage,
-    WebSocketMessage,
+    ActionMessage, ActionTarget, AddMessage, ConnectionMessage, DaemonMessage, DownloadsMessage,
+    Message, RefreshInvalidation, SelectionMessage, SettingsMessage, TextInputFocusTarget,
+    ToolbarMessage, WebSocketMessage,
 };
+#[cfg(test)]
+pub use state::DaemonStatus;
 #[cfg(test)]
 pub use state::NotificationOutcome;
 pub use state::{
@@ -34,7 +36,7 @@ fn boot() -> (State, Task<Message>) {
 }
 
 fn boot_with(mut state: State) -> (State, Task<Message>) {
-    let task = update::start_connection_test(&mut state);
+    let task = update::start_boot_connection(&mut state);
     (state, task)
 }
 
@@ -76,16 +78,21 @@ mod tests {
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
     use crate::aria2::websocket::WebSocketEvent;
-    use crate::config::{DaemonMode, PersistedConfig, Settings, ThemePreference};
+    use crate::config::{DaemonMode, PersistedConfig, Secret, Settings, ThemePreference};
+    use crate::daemon::{
+        DaemonManager, ManagedDaemonStart, ManagedRuntimeConfig,
+        error::{DaemonError, DaemonErrorKind},
+        paths::ManagedDaemonPaths,
+    };
     use crate::ui::overlay::PopoverId;
     use crate::ui::widgets::tree_list::TreeMessage;
 
     use super::{
         ActionMessage, ActionTarget, AddMessage, ConnectionMessage, ConnectionStatus,
-        DownloadFilter, DownloadRowTrailing, DownloadsMessage, FeedbackTone, FileIcon, Message,
-        NotificationOutcome, PendingActionConfirmation, RefreshInvalidation, RefreshState,
-        SelectionMessage, SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
-        WebSocketMessage,
+        DaemonMessage, DaemonStatus, DownloadFilter, DownloadRowTrailing, DownloadsMessage,
+        FeedbackTone, FileIcon, Message, NotificationOutcome, PendingActionConfirmation,
+        RefreshInvalidation, RefreshState, SelectionMessage, SettingsMessage, State,
+        TextInputFocusTarget, ToolbarMessage, WebSocketMessage,
     };
 
     #[test]
@@ -141,7 +148,63 @@ mod tests {
 
         let (state, _task) = super::boot_from_path(path);
 
+        assert_eq!(state.daemon_status(), DaemonStatus::Starting);
         assert_eq!(state.connection_status(), ConnectionStatus::Offline);
+        assert_eq!(state.refresh_state(), RefreshState::NeverRefreshed);
+    }
+
+    #[test]
+    fn managed_daemon_readiness_connects_and_starts_initial_refresh() {
+        let path = temp_config_path("managed-ready");
+        let (mut state, _task) = super::boot_from_path(path);
+        let runtime = ManagedRuntimeConfig::new(68_01, Secret::session("managed-secret"), 2, true)
+            .expect("runtime config");
+        let manager = DaemonManager::test(
+            runtime,
+            ManagedDaemonPaths::from_root(temp_config_path("managed-root")),
+        );
+        let started = ManagedDaemonStart::test(
+            manager,
+            ConnectionTest::new(VersionInfo::new("1.37.0", Vec::new())),
+        );
+
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 1,
+                result: Ok(started),
+            }),
+        );
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Running);
+        assert_eq!(state.connection_status(), ConnectionStatus::Connected);
+        assert_eq!(state.connected_version(), Some("1.37.0"));
+        assert_eq!(state.refresh_state(), RefreshState::Refreshing);
+    }
+
+    #[test]
+    fn managed_daemon_start_failure_records_daemon_error_without_refresh() {
+        let path = temp_config_path("managed-failure");
+        let (mut state, _task) = super::boot_from_path(path);
+
+        let _task = super::update(
+            &mut state,
+            Message::Daemon(DaemonMessage::StartFinished {
+                generation: 1,
+                result: Err(DaemonError::new(
+                    DaemonErrorKind::BinaryNotFound,
+                    "token:managed-secret",
+                )),
+            }),
+        );
+
+        assert_eq!(state.daemon_status(), DaemonStatus::Failed);
+        assert_eq!(state.connection_status(), ConnectionStatus::Failed);
+        assert_eq!(
+            state.daemon_error().map(DaemonError::kind),
+            Some(DaemonErrorKind::BinaryNotFound)
+        );
+        assert_eq!(state.refresh_state(), RefreshState::NeverRefreshed);
     }
 
     #[test]
