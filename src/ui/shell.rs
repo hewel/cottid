@@ -5,7 +5,7 @@ use crate::app::{
     AddMessage, ConnectionMessage, ConnectionStatus, DownloadsMessage, Message,
     PendingActionConfirmation, SettingsMessage, State, TextInputFocusTarget, ToolbarMessage,
 };
-use crate::config::ThemePreference;
+use crate::config::{DaemonMode, ThemePreference};
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::overlay::{
@@ -424,6 +424,7 @@ fn add_modal(state: &State) -> Element<'_, Message> {
 
 fn settings_modal(state: &State) -> Element<'_, Message> {
     let is_testing = matches!(state.connection_status(), ConnectionStatus::Testing);
+    let mode = daemon_mode_selector(state);
     let endpoint = text_field(
         FieldOptions {
             description: Some("aria2 JSON-RPC endpoint."),
@@ -613,7 +614,10 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         |value| Message::Settings(SettingsMessage::SecretChanged(value)),
     );
 
-    let mut fields = column![text("Connection Settings").size(20), endpoint, secret,].spacing(8);
+    let mut fields = column![text("Connection Settings").size(20), mode,].spacing(8);
+    if state.is_draft_external_daemon_mode() {
+        fields = fields.push(endpoint).push(secret);
+    }
 
     if let Some(feedback) = state.settings_feedback() {
         fields = fields.push(ui::form_feedback_banner(feedback));
@@ -680,6 +684,30 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
         .padding(18)
         .width(Length::Fill)
         .into()
+}
+
+fn daemon_mode_selector(state: &State) -> Element<'static, Message> {
+    row![
+        ui::toggle_button(
+            text("Managed local").size(13),
+            state.draft_daemon_mode() == DaemonMode::Managed
+        )
+        .padding([8, 10])
+        .on_press(Message::Settings(SettingsMessage::DaemonModeChanged(
+            DaemonMode::Managed,
+        ))),
+        ui::toggle_button(
+            text("External").size(13),
+            state.draft_daemon_mode() == DaemonMode::External
+        )
+        .padding([8, 10])
+        .on_press(Message::Settings(SettingsMessage::DaemonModeChanged(
+            DaemonMode::External,
+        ))),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn field_error(message: &'static str) -> FieldStatus<'static> {

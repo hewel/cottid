@@ -11,9 +11,9 @@ use crate::aria2::domain::{
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::config::{
-    AuthStorage, ConfigLoad, PersistedConfig, Settings, SettingsDraft, SystemTokenStore,
-    ThemePreference, default_config_path, load_config, save_config_with_token_store,
-    save_config_without_token_store,
+    AuthStorage, ConfigLoad, DaemonMode, PersistedConfig, Settings, SettingsDraft,
+    SystemTokenStore, ThemePreference, default_config_path, load_config,
+    save_config_with_token_store, save_config_without_token_store,
 };
 use crate::ui::overlay::{PopoverId, PopoverState};
 use crate::ui::widgets::tree_list::{TreeMessage, TreeNode, TreeState};
@@ -405,6 +405,8 @@ impl State {
             },
             websocket_status: WebSocketStatus::Disabled,
             settings: SettingsState {
+                daemon_mode: config.daemon_mode(),
+                draft_daemon_mode: config.daemon_mode(),
                 applied: applied_settings,
                 draft,
                 theme_preference: config.theme_preference(),
@@ -542,6 +544,18 @@ impl State {
 
     pub fn applied_endpoint(&self) -> &str {
         self.settings.applied.endpoint()
+    }
+
+    pub fn daemon_mode(&self) -> DaemonMode {
+        self.settings.daemon_mode
+    }
+
+    pub fn draft_daemon_mode(&self) -> DaemonMode {
+        self.settings.draft_daemon_mode
+    }
+
+    pub fn is_draft_external_daemon_mode(&self) -> bool {
+        matches!(self.settings.draft_daemon_mode, DaemonMode::External)
     }
 
     pub fn applied_auth_label(&self) -> &'static str {
@@ -838,7 +852,8 @@ impl State {
 
     pub fn status_text(&self) -> String {
         format!(
-            "{} | {} | {}",
+            "{} | {} | {} | {}",
+            self.settings.daemon_mode.label(),
             connection_label(self.connection.status),
             websocket_status_label(self.websocket_status),
             self.settings.applied.auth().display_label()
@@ -851,6 +866,15 @@ impl State {
     }
 
     pub(super) fn begin_connection_test(&mut self) -> Option<(u64, Settings)> {
+        if !matches!(self.settings.draft_daemon_mode, DaemonMode::External) {
+            if self.settings.open {
+                self.settings.feedback = Some(FormFeedback::warning(
+                    "Managed daemon startup will test the generated local connection.",
+                ));
+            }
+            return None;
+        }
+
         let settings = if self.settings.open {
             match self.settings.draft.apply() {
                 Ok(settings) => settings,
@@ -902,6 +926,7 @@ impl State {
                     let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
                     self.commit_settings(
                         settings,
+                        DaemonMode::External,
                         previous_endpoint,
                         false,
                         "Connection test succeeded and settings saved.",
@@ -1590,6 +1615,8 @@ impl State {
         if let Some(pending) = self.settings.pending_plaintext_fallback.take() {
             self.settings.applied = pending.previous_settings;
             self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+            self.settings.daemon_mode = pending.previous_daemon_mode;
+            self.settings.draft_daemon_mode = pending.previous_daemon_mode;
             self.settings.theme_preference = pending.previous_theme_preference;
             self.settings.auth_storage = pending.previous_auth_storage;
             if self.connection.settings.as_ref() == Some(&pending.settings) {
@@ -1600,6 +1627,7 @@ impl State {
             }
         }
         self.settings.draft.cancel_to(&self.settings.applied);
+        self.settings.draft_daemon_mode = self.settings.daemon_mode;
         self.settings.draft_new_download_directory = self.settings.new_download_directory.clone();
         self.settings.draft_new_download_output_filename =
             self.settings.new_download_output_filename.clone();
@@ -1636,6 +1664,11 @@ impl State {
 
     pub(super) fn set_draft_websocket_enabled(&mut self, enabled: bool) {
         self.settings.draft.set_websocket_enabled(enabled);
+        self.settings.feedback = None;
+    }
+
+    pub(super) fn set_draft_daemon_mode(&mut self, daemon_mode: DaemonMode) {
+        self.settings.draft_daemon_mode = daemon_mode;
         self.settings.feedback = None;
     }
 
@@ -1704,7 +1737,14 @@ impl State {
                     .to_owned();
                 let directory = self.settings.new_download_directory.clone();
                 let previous_endpoint = Some(self.settings.applied.endpoint().to_owned());
-                self.commit_settings(settings, previous_endpoint, true, "Settings saved.");
+                let daemon_mode = self.settings.draft_daemon_mode;
+                self.commit_settings(
+                    settings,
+                    daemon_mode,
+                    previous_endpoint,
+                    true,
+                    "Settings saved.",
+                );
                 let runtime_options = RuntimeGlobalOptions::with_values(
                     clean_optional(&directory),
                     clean_optional(&self.settings.runtime_max_concurrent_downloads),
@@ -1718,7 +1758,8 @@ impl State {
                     .settings
                     .clone()
                     .filter(|settings| {
-                        settings.endpoint() == self.settings.applied.endpoint()
+                        matches!(self.settings.daemon_mode, DaemonMode::External)
+                            && settings.endpoint() == self.settings.applied.endpoint()
                             && settings.auth() == self.settings.applied.auth()
                     })
                     .map(|settings| {
@@ -1758,6 +1799,8 @@ impl State {
 
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.daemon_mode = pending.daemon_mode;
+        self.settings.draft_daemon_mode = pending.daemon_mode;
         self.websocket_status = if self.settings.applied.websocket_enabled() {
             WebSocketStatus::Connecting
         } else {
@@ -1782,6 +1825,8 @@ impl State {
 
         self.settings.applied = pending.settings.clone();
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.daemon_mode = pending.daemon_mode;
+        self.settings.draft_daemon_mode = pending.daemon_mode;
         self.websocket_status = if self.settings.applied.websocket_enabled() {
             WebSocketStatus::Connecting
         } else {
@@ -1804,6 +1849,7 @@ impl State {
     fn commit_settings(
         &mut self,
         settings: Settings,
+        daemon_mode: DaemonMode,
         previous_endpoint: Option<String>,
         close_on_success: bool,
         success_feedback: &'static str,
@@ -1811,8 +1857,11 @@ impl State {
         let previous_settings = self.settings.applied.clone();
         let previous_auth_storage = self.settings.auth_storage;
         let previous_theme_preference = self.settings.theme_preference;
+        let previous_daemon_mode = self.settings.daemon_mode;
         self.settings.applied = settings;
         self.settings.draft = SettingsDraft::from_settings(&self.settings.applied);
+        self.settings.daemon_mode = daemon_mode;
+        self.settings.draft_daemon_mode = daemon_mode;
         self.websocket_status = if self.settings.applied.websocket_enabled() {
             WebSocketStatus::Connecting
         } else {
@@ -1829,6 +1878,7 @@ impl State {
                 previous_settings,
                 previous_auth_storage,
                 previous_theme_preference,
+                previous_daemon_mode,
             )),
         );
         if persisted {
@@ -1859,7 +1909,7 @@ impl State {
     fn persist_config(
         &mut self,
         previous_endpoint: Option<String>,
-        rollback: Option<(Settings, AuthStorage, ThemePreference)>,
+        rollback: Option<(Settings, AuthStorage, ThemePreference, DaemonMode)>,
     ) -> bool {
         self.persist_config_with_auth_storage(
             self.settings.auth_storage,
@@ -1872,7 +1922,7 @@ impl State {
         &mut self,
         auth_storage: AuthStorage,
         previous_endpoint: Option<String>,
-        rollback: Option<(Settings, AuthStorage, ThemePreference)>,
+        rollback: Option<(Settings, AuthStorage, ThemePreference, DaemonMode)>,
     ) -> bool {
         let config = PersistedConfig::with_auth_storage_and_theme(
             self.settings.applied.clone(),
@@ -1880,6 +1930,7 @@ impl State {
             auth_storage,
             self.settings.theme_preference,
         )
+        .with_daemon_mode(self.settings.daemon_mode)
         .with_ui_preferences(
             self.settings.confirm_destructive_actions,
             self.settings.notify_download_outcomes,
@@ -1910,17 +1961,23 @@ impl State {
                     settings: self.settings.applied.clone(),
                     previous_settings: rollback.as_ref().map_or_else(
                         || self.settings.applied.clone(),
-                        |(settings, _, _)| settings.clone(),
+                        |(settings, _, _, _)| settings.clone(),
                     ),
                     previous_auth_storage: rollback
                         .as_ref()
-                        .map_or(self.settings.auth_storage, |(_, auth_storage, _)| {
+                        .map_or(self.settings.auth_storage, |(_, auth_storage, _, _)| {
                             *auth_storage
                         }),
                     previous_theme_preference: rollback.as_ref().map_or(
                         self.settings.theme_preference,
-                        |(_, _, theme_preference)| *theme_preference,
+                        |(_, _, theme_preference, _)| *theme_preference,
                     ),
+                    previous_daemon_mode: rollback
+                        .as_ref()
+                        .map_or(self.settings.daemon_mode, |(_, _, _, daemon_mode)| {
+                            *daemon_mode
+                        }),
+                    daemon_mode: self.settings.daemon_mode,
                     theme_preference: self.settings.theme_preference,
                     previous_endpoint,
                     close_on_success: false,
@@ -1945,6 +2002,7 @@ impl State {
             self.settings.auth_storage,
             self.settings.theme_preference,
         )
+        .with_daemon_mode(self.settings.daemon_mode)
         .with_ui_preferences(
             self.settings.confirm_destructive_actions,
             self.settings.notify_download_outcomes,
@@ -2225,6 +2283,8 @@ struct AddState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SettingsState {
+    daemon_mode: DaemonMode,
+    draft_daemon_mode: DaemonMode,
     applied: Settings,
     draft: SettingsDraft,
     theme_preference: ThemePreference,
@@ -2258,6 +2318,8 @@ struct PendingSettingsSave {
     previous_settings: Settings,
     previous_auth_storage: AuthStorage,
     previous_theme_preference: ThemePreference,
+    previous_daemon_mode: DaemonMode,
+    daemon_mode: DaemonMode,
     theme_preference: ThemePreference,
     previous_endpoint: Option<String>,
     close_on_success: bool,

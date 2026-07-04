@@ -6,6 +6,7 @@ use crate::aria2::domain::RuntimeGlobalOptions;
 use crate::aria2::errors::ClientError;
 use crate::aria2::notifications::Aria2Notification;
 use crate::aria2::websocket::WebSocketEvent;
+use crate::config::DaemonMode;
 use crate::config::Settings;
 use crate::config::ThemePreference;
 use crate::ui::overlay::PopoverId;
@@ -169,6 +170,7 @@ pub enum SettingsMessage {
     Save,
     SavePlaintextFallback,
     KeepSecretSessionOnly,
+    DaemonModeChanged(DaemonMode),
     EndpointChanged(String),
     SecretChanged(String),
     PollingIntervalChanged(String),

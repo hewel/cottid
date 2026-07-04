@@ -76,7 +76,7 @@ mod tests {
     use crate::aria2::errors::ClientError;
     use crate::aria2::notifications::Aria2Notification;
     use crate::aria2::websocket::WebSocketEvent;
-    use crate::config::{Settings, ThemePreference};
+    use crate::config::{DaemonMode, PersistedConfig, Settings, ThemePreference};
     use crate::ui::overlay::PopoverId;
     use crate::ui::widgets::tree_list::TreeMessage;
 
@@ -130,22 +130,45 @@ mod tests {
     fn starts_offline_and_settings_ready() {
         let state = State::initial();
 
+        assert_eq!(state.daemon_mode(), DaemonMode::Managed);
         assert_eq!(state.connection_status(), ConnectionStatus::Offline);
         assert!(state.is_settings_ready());
     }
 
     #[test]
-    fn boot_starts_connection_test_from_loaded_config() {
+    fn boot_waits_for_managed_startup_from_default_config() {
         let path = temp_config_path("boot-auto-connect");
 
         let (state, _task) = super::boot_from_path(path);
 
+        assert_eq!(state.connection_status(), ConnectionStatus::Offline);
+    }
+
+    #[test]
+    fn boot_starts_connection_test_from_external_config() {
+        let path = temp_config_path("boot-external-auto-connect");
+        let config = PersistedConfig::with_auth_storage(
+            Settings::default(),
+            "active",
+            crate::config::AuthStorage::None,
+        );
+        crate::config::save_config_without_token_store(&path, &config).expect("config saves");
+
+        let (state, _task) = super::boot_from_path(path);
+
+        assert_eq!(state.daemon_mode(), DaemonMode::External);
         assert_eq!(state.connection_status(), ConnectionStatus::Testing);
     }
 
     #[test]
     fn boot_connection_success_triggers_initial_refresh() {
         let path = temp_config_path("boot-refresh");
+        let config = PersistedConfig::with_auth_storage(
+            Settings::default(),
+            "active",
+            crate::config::AuthStorage::None,
+        );
+        crate::config::save_config_without_token_store(&path, &config).expect("config saves");
         let (mut state, _task) = super::boot_from_path(path);
 
         let _task = super::update(
@@ -412,6 +435,24 @@ mod tests {
 
         assert_eq!(state.applied_endpoint(), "http://aria2.local:6800/jsonrpc");
         assert_eq!(state.draft_endpoint(), "http://aria2.local:6800/jsonrpc");
+    }
+
+    #[test]
+    fn settings_draft_mode_does_not_change_applied_mode_until_saved() {
+        let mut state = State::initial();
+
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::DaemonModeChanged(DaemonMode::External)),
+        );
+
+        assert_eq!(state.daemon_mode(), DaemonMode::Managed);
+        assert_eq!(state.draft_daemon_mode(), DaemonMode::External);
+
+        let _task = super::update(&mut state, Message::Settings(SettingsMessage::Save));
+
+        assert_eq!(state.daemon_mode(), DaemonMode::External);
+        assert_eq!(state.draft_daemon_mode(), DaemonMode::External);
     }
 
     #[test]
@@ -808,6 +849,10 @@ mod tests {
         let path = temp_config_path("test-connection-save");
         let mut state = State::load_from_path(path.clone());
         let _task = super::update(&mut state, Message::Toolbar(ToolbarMessage::OpenSettings));
+        let _task = super::update(
+            &mut state,
+            Message::Settings(SettingsMessage::DaemonModeChanged(DaemonMode::External)),
+        );
 
         let _task = super::update(
             &mut state,
@@ -1099,6 +1144,7 @@ mod tests {
     #[test]
     fn connection_test_result_updates_visible_connection_state() {
         let mut state = State::initial();
+        use_external_mode(&mut state);
         let _task = super::update(
             &mut state,
             Message::Connection(ConnectionMessage::TestRequested),
@@ -1132,6 +1178,7 @@ mod tests {
     #[test]
     fn initial_refresh_failure_keeps_successful_connection_state() {
         let mut state = State::initial();
+        use_external_mode(&mut state);
         let _task = super::update(
             &mut state,
             Message::Connection(ConnectionMessage::TestRequested),
@@ -1165,6 +1212,7 @@ mod tests {
     #[test]
     fn stale_connection_test_results_are_ignored() {
         let mut state = State::initial();
+        use_external_mode(&mut state);
         let _task = super::update(
             &mut state,
             Message::Connection(ConnectionMessage::TestRequested),
@@ -2345,6 +2393,7 @@ mod tests {
     #[test]
     fn download_snapshot_refresh_result_updates_visible_shell_labels_and_rows() {
         let mut state = State::initial();
+        use_external_mode(&mut state);
         let _task = super::update(
             &mut state,
             Message::Connection(ConnectionMessage::TestRequested),
@@ -2798,6 +2847,7 @@ mod tests {
     }
 
     fn connect(state: &mut State) {
+        use_external_mode(state);
         let _task = super::update(state, Message::Connection(ConnectionMessage::TestRequested));
         let _task = super::update(
             state,
@@ -2814,6 +2864,14 @@ mod tests {
                 result: Ok(snapshot_with_items(Vec::new())),
             }),
         );
+    }
+
+    fn use_external_mode(state: &mut State) {
+        let _task = super::update(
+            state,
+            Message::Settings(SettingsMessage::DaemonModeChanged(DaemonMode::External)),
+        );
+        let _task = super::update(state, Message::Settings(SettingsMessage::Save));
     }
 
     fn snapshot_with_items(items: Vec<DownloadItem>) -> DownloadSnapshot {
