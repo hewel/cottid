@@ -1,5 +1,6 @@
 use iced::widget::{
-    button, column, container, mouse_area, opaque, row, scrollable, space, stack, text,
+    button, column, container, mouse_area, opaque, row, scrollable as iced_scrollable, space,
+    stack, text,
 };
 use iced::{Alignment, Color, Element, Length, Theme};
 
@@ -68,9 +69,9 @@ pub(crate) fn modal_layer<'a>(
     .on_press(Message::ModalCancel)
     .into();
 
-    let modal_content = scrollable(content).width(Length::Fill);
+    let modal_content = padded_scrollable(content, TOKENS.spacing.s5).width(Length::Fill);
     let modal_card = opaque(
-        container(modal_content)
+        modal_surface(modal_content)
             .width(Length::Fill)
             .max_width(max_width)
             .max_height(max_height),
@@ -81,6 +82,26 @@ pub(crate) fn modal_layer<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+pub(crate) fn scrollable<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> iced_scrollable::Scrollable<'a, Message> {
+    iced_scrollable(content)
+        .direction(iced_scrollable::Direction::Vertical(
+            iced_scrollable::Scrollbar::new()
+                .width(TOKENS.scrollbar.rail_width)
+                .scroller_width(TOKENS.scrollbar.thumb_width)
+                .spacing(TOKENS.scrollbar.content_gap),
+        ))
+        .style(theme::scrollable)
+}
+
+pub(crate) fn padded_scrollable<'a>(
+    content: impl Into<Element<'a, Message>>,
+    padding: f32,
+) -> iced_scrollable::Scrollable<'a, Message> {
+    scrollable(container(content).padding(padding).width(Length::Fill))
 }
 
 pub(crate) fn search_surface<'a>(

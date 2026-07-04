@@ -1,5 +1,5 @@
 use iced::theme::Palette;
-use iced::widget::{button, container, progress_bar, text};
+use iced::widget::{button, container, progress_bar, scrollable as iced_scrollable, text};
 use iced::{Background, Border, Color, Theme};
 
 use crate::ui::tokens::{Mode, TOKENS, mode_from_theme};
@@ -78,6 +78,10 @@ pub(crate) fn progress_variant(theme: &Theme, variant: ProgressVariant) -> progr
             },
         },
     }
+}
+
+pub(crate) fn scrollable(theme: &Theme, status: iced_scrollable::Status) -> iced_scrollable::Style {
+    widgets::scrollable::style(theme, status)
 }
 
 pub(crate) fn feedback_color(theme: &Theme, variant: FeedbackVariant) -> Color {

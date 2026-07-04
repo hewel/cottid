@@ -1,4 +1,4 @@
-use iced::widget::{column, container, mouse_area, progress_bar, row, scrollable, text};
+use iced::widget::{column, container, mouse_area, progress_bar, row, text};
 use iced::{Alignment, Element, Length, mouse};
 
 use crate::app::{
@@ -8,6 +8,7 @@ use crate::app::{
 use crate::ui::components as ui;
 use crate::ui::icons::{Icon, icon};
 use crate::ui::theme;
+use crate::ui::tokens::TOKENS;
 use crate::ui::widgets::tree_list::{TreeDensity, TreeState, tree_list_owned};
 
 pub fn view(state: &State) -> Element<'_, Message> {
@@ -51,7 +52,7 @@ fn list_panel(state: &State) -> container::Container<'_, Message> {
         }
     }
 
-    container(column![header(), scrollable(content).height(Length::Fill),].spacing(22))
+    container(column![header(), ui::scrollable(content).height(Length::Fill),].spacing(22))
         .width(Length::Fill)
         .height(Length::Fill)
 }
@@ -237,9 +238,7 @@ fn detail_panel(
     detail: DownloadDetailView,
     file_tree_state: TreeState,
 ) -> container::Container<'static, Message> {
-    ui::card_surface(detail_content(detail, file_tree_state), false)
-        .padding(20)
-        .height(Length::Fill)
+    ui::card_surface(detail_content(detail, file_tree_state), false).height(Length::Fill)
 }
 
 fn detail_content(
@@ -302,5 +301,7 @@ fn detail_content(
         );
     }
 
-    scrollable(content).height(Length::Fill).into()
+    ui::padded_scrollable(content, TOKENS.spacing.s5)
+        .height(Length::Fill)
+        .into()
 }

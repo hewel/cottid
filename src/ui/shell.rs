@@ -102,10 +102,7 @@ fn action_confirmation_modal(state: &State) -> Element<'_, Message> {
     ]
     .spacing(12);
 
-    ui::modal_surface(content)
-        .padding(18)
-        .width(Length::Fill)
-        .into()
+    content.into()
 }
 
 fn sidebar(state: &State, compact: bool) -> container::Container<'_, Message> {
@@ -429,10 +426,7 @@ fn add_modal(state: &State) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     );
 
-    ui::modal_surface(content)
-        .padding(18)
-        .width(Length::Fill)
-        .into()
+    content.into()
 }
 
 fn settings_modal(state: &State) -> Element<'_, Message> {
@@ -693,10 +687,7 @@ fn settings_modal(state: &State) -> Element<'_, Message> {
             );
     }
 
-    ui::modal_surface(column![fields, actions].spacing(16))
-        .padding(18)
-        .width(Length::Fill)
-        .into()
+    column![fields, actions].spacing(16).into()
 }
 
 fn daemon_mode_selector(state: &State) -> Element<'static, Message> {

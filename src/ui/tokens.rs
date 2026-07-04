@@ -28,6 +28,7 @@ pub(crate) struct DesignTokens {
     pub(crate) interaction_overlay: Pair<InteractionOverlay>,
     pub(crate) spacing: AppSpacing,
     pub(crate) radius: AppRadius,
+    pub(crate) scrollbar: AppScrollbar,
     pub(crate) border_width: AppBorderWidth,
     pub(crate) shadow: AppShadow,
     pub(crate) typography: AppTypography,
@@ -110,6 +111,14 @@ pub(crate) struct AppRadius {
     pub(crate) page: f32,
     pub(crate) full: f32,
     pub(crate) progress: f32,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AppScrollbar {
+    pub(crate) rail_width: f32,
+    pub(crate) thumb_width: f32,
+    pub(crate) content_gap: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -247,6 +256,11 @@ pub(crate) const TOKENS: DesignTokens = DesignTokens {
         page: 28.0,
         full: 9999.0,
         progress: 6.0,
+    },
+    scrollbar: AppScrollbar {
+        rail_width: 8.0,
+        thumb_width: 6.0,
+        content_gap: 12.0,
     },
     border_width: AppBorderWidth {
         hairline: 0.0,
