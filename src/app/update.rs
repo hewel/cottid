@@ -55,6 +55,13 @@ pub fn start_managed_daemon(state: &mut State) -> Task<Message> {
         return Task::none();
     };
 
+    start_managed_daemon_task(generation, config)
+}
+
+fn start_managed_daemon_task(
+    generation: u64,
+    config: crate::daemon::ManagedDaemonConfig,
+) -> Task<Message> {
     Task::perform(
         async move { crate::daemon::start_managed_daemon(config).await },
         move |result| Message::Daemon(DaemonMessage::StartFinished { generation, result }),
@@ -63,6 +70,20 @@ pub fn start_managed_daemon(state: &mut State) -> Task<Message> {
 
 fn update_daemon(state: &mut State, message: DaemonMessage) -> Task<Message> {
     match message {
+        DaemonMessage::MonitorTick => {
+            let Some((generation, config)) = state.poll_managed_daemon_exit() else {
+                return Task::none();
+            };
+
+            start_managed_daemon_task(generation, config)
+        }
+        DaemonMessage::ChildExited { generation } => {
+            let Some((generation, config)) = state.handle_managed_daemon_exit(generation) else {
+                return Task::none();
+            };
+
+            start_managed_daemon_task(generation, config)
+        }
         DaemonMessage::StartFinished { generation, result } => {
             let Some(settings) = state.finish_managed_daemon_start(generation, result) else {
                 return Task::none();

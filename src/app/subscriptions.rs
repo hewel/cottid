@@ -6,8 +6,8 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use super::{
-    AddMessage, DownloadsMessage, Message, SelectionMessage, SettingsMessage, ToolbarMessage,
-    WebSocketMessage,
+    AddMessage, DaemonMessage, DownloadsMessage, Message, SelectionMessage, SettingsMessage,
+    ToolbarMessage, WebSocketMessage,
 };
 
 pub fn subscription(state: &super::State) -> Subscription<Message> {
@@ -24,6 +24,13 @@ pub fn subscription(state: &super::State) -> Subscription<Message> {
 
         if let Some(endpoint) = state.websocket_subscription_endpoint() {
             subscriptions.push(Subscription::run_with(endpoint, websocket_notifications));
+        }
+
+        if state.is_managed_daemon_running() {
+            subscriptions.push(
+                iced::time::every(Duration::from_secs(1))
+                    .map(|_| Message::Daemon(DaemonMessage::MonitorTick)),
+            );
         }
 
         return Subscription::batch(subscriptions);
