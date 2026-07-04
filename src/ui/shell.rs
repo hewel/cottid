@@ -202,8 +202,9 @@ fn theme_icon(preference: ThemePreference) -> Icon {
 }
 
 fn connection_detail_content(state: &State) -> Element<'static, Message> {
-    column![
+    let mut content = column![
         text("Connection").size(12).style(theme::muted_text),
+        text(state.daemon_status_text()).size(13),
         text(state.status_text()).size(13),
         text(state.applied_auth_label().to_owned())
             .size(12)
@@ -219,9 +220,17 @@ fn connection_detail_content(state: &State) -> Element<'static, Message> {
             .size(12)
             .style(theme::muted_text),
     ]
-    .spacing(4)
-    .width(Length::Fill)
-    .into()
+    .spacing(4);
+
+    if let Some(error) = state.daemon_error_text() {
+        content = content.push(text(error).size(12).style(theme::danger_text));
+    }
+
+    if let Some(log_path) = state.managed_daemon_log_path_text() {
+        content = content.push(text(log_path).size(12).style(theme::muted_text));
+    }
+
+    content.width(Length::Fill).into()
 }
 
 fn connection_detail_popover(state: &State) -> Element<'_, Message> {
